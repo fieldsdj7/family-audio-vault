@@ -69,7 +69,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#f6f0e5] text-stone-800">
-      <div className="mx-auto grid min-h-screen max-w-[1500px] lg:grid-cols-[250px_minmax(0,1fr)]">
+      <div className="grid min-h-screen lg:grid-cols-[250px_minmax(0,1fr)]">
         <aside className="border-b border-stone-800 bg-[#20221e] px-5 py-6 text-stone-100 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#c98b3c] text-[#20221e]">
