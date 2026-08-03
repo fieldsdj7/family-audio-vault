@@ -1,100 +1,70 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import {
   AlertCircle,
+  ArrowLeft,
+  BookOpen,
   CheckCircle,
+  FileAudio,
+  Headphones,
   Loader2,
   Lock,
-  LogIn,
-  LogOut,
+  Tag,
   Upload,
+  UserRound,
 } from 'lucide-react';
 
-const ADMIN_USER_ID = '77841301-e8c3-4502-919e-350bc0ca0aa7';
-
-type Notice = {
-  type: 'success' | 'error';
-  text: string;
-};
+const vaults = [
+  { name: 'Papa', title: "Papa's Life" },
+  { name: 'Dad', title: "Dad's Life" },
+  { name: 'Mom', title: "Mom's Life" },
+];
 
 export default function AdminUpload() {
-  const [checkingSession, setCheckingSession] = useState(true);
-  const [isAuthorized, setIsAuthorized] = useState(false);
-
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [loggingIn, setLoggingIn] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passcode, setPasscode] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
 
   const [title, setTitle] = useState('');
   const [speaker, setSpeaker] = useState('');
+  const [vaultPerson, setVaultPerson] = useState('Dad');
   const [category, setCategory] = useState('General');
   const [file, setFile] = useState<File | null>(null);
   const [storyChapter, setStoryChapter] = useState('');
+
   const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState<Notice | null>(null);
+  const [message, setMessage] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
-    async function checkSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      setIsAuthorized(session?.user.id === ADMIN_USER_ID);
-      setCheckingSession(false);
+    if (localStorage.getItem('admin_authenticated') === 'true') {
+      setIsAuthenticated(true);
     }
-
-    checkSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthorized(session?.user.id === ADMIN_USER_ID);
-      setCheckingSession(false);
-    });
-
-    return () => subscription.unsubscribe();
   }, []);
 
-  async function handleLogin(e: React.FormEvent) {
+  function handlePasscodeSubmit(e: FormEvent) {
     e.preventDefault();
-    setLoggingIn(true);
-    setLoginError('');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      setLoginError(error.message);
-      setLoggingIn(false);
-      return;
+    if (passcode === process.env.NEXT_PUBLIC_ADMIN_PASSCODE) {
+      localStorage.setItem('admin_authenticated', 'true');
+      setIsAuthenticated(true);
+      setPasscodeError('');
+    } else {
+      setPasscodeError('Incorrect passcode. Please try again.');
     }
-
-    if (data.user.id !== ADMIN_USER_ID) {
-      await supabase.auth.signOut();
-      setLoginError('This account is not allowed to access the upload portal.');
-    }
-
-    setLoggingIn(false);
   }
 
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    setMessage(null);
-    setPassword('');
-  }
-
-  async function handleUpload(e: React.FormEvent) {
+  async function handleUpload(e: FormEvent) {
     e.preventDefault();
 
     if (!file || !title || !speaker) {
       setMessage({
         type: 'error',
-        text: 'Please fill in all required fields and select an audio file.',
+        text: 'Please add a title, speaker, and audio file.',
       });
       return;
     }
@@ -103,8 +73,8 @@ export default function AdminUpload() {
     setMessage(null);
 
     try {
-      const fileExtension = file.name.split('.').pop() || 'audio';
-      const fileName = `${Date.now()}.${fileExtension}`;
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
       const filePath = `recordings/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
@@ -122,6 +92,7 @@ export default function AdminUpload() {
           title,
           speaker,
           category,
+          vault_person: vaultPerson,
           audio_url: urlData.publicUrl,
           story_chapter: storyChapter || null,
         },
@@ -131,96 +102,65 @@ export default function AdminUpload() {
 
       setMessage({
         type: 'success',
-        text: 'Audio track successfully saved to the vault!',
+        text: `Saved to ${vaultPerson}'s vault.`,
       });
+
       setTitle('');
       setSpeaker('');
+      setVaultPerson('Dad');
       setCategory('General');
       setFile(null);
       setStoryChapter('');
-    } catch (err: unknown) {
-      const errorMessage =
-        err instanceof Error ? err.message : 'Failed to upload audio.';
-
+    } catch (err: any) {
       console.error('Upload error:', err);
-      setMessage({ type: 'error', text: errorMessage });
+      setMessage({
+        type: 'error',
+        text: err.message || 'Failed to upload audio.',
+      });
     } finally {
       setUploading(false);
     }
   }
 
-  if (checkingSession) {
+  if (!isAuthenticated) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <Loader2 className="w-7 h-7 animate-spin text-indigo-600" />
-      </main>
-    );
-  }
-
-  if (!isAuthorized) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200 text-center space-y-6">
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
-            <Lock className="w-6 h-6" />
-          </div>
-
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">
-              Admin Sign In
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              Sign in with your Supabase admin account to upload recordings.
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800">
+        <div className="w-full max-w-md overflow-hidden rounded-3xl border border-stone-300 bg-[#fffaf0] shadow-xl">
+          <div className="bg-[#20221e] p-8 text-center text-stone-100">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#c98b3c] text-[#20221e]">
+              <Lock className="h-5 w-5" />
+            </div>
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-[#e3bb77]">
+              Fields Family Vault
+            </p>
+            <h1 className="mt-2 font-serif text-3xl">Admin Access</h1>
+            <p className="mt-3 text-sm leading-relaxed text-stone-300">
+              Enter the passcode to add another family memory.
             </p>
           </div>
 
-          {loginError && (
-            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-sm flex items-center gap-2 text-left">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{loginError}</span>
-            </div>
-          )}
+          <form onSubmit={handlePasscodeSubmit} className="space-y-5 p-7">
+            {passcodeError && (
+              <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {passcodeError}
+              </div>
+            )}
 
-          <form onSubmit={handleLogin} className="space-y-4 text-left">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                required
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800"
-              />
-            </div>
+            <input
+              type="password"
+              required
+              placeholder="Enter admin passcode"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-center text-lg tracking-widest text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+            />
 
             <button
               type="submit"
-              disabled={loggingIn}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2"
+              className="w-full rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white transition hover:bg-[#293127]"
             >
-              {loggingIn ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <LogIn className="w-5 h-5" />
-              )}
-              Sign In
+              Unlock Vault
             </button>
           </form>
         </div>
@@ -229,135 +169,188 @@ export default function AdminUpload() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-2xl mx-auto bg-white rounded-2xl p-6 md:p-8 shadow-sm border border-slate-200 space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">
-              📤 Upload Audio Memory
-            </h1>
-            <p className="text-slate-500 text-sm mt-1">
-              Add a new voice recording to your family audio vault.
-            </p>
-          </div>
+    <main className="min-h-screen bg-[#f6f0e5] p-5 text-stone-800 md:p-10">
+      <div className="mx-auto max-w-3xl">
+        <a
+          href="/"
+          className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 transition hover:text-[#8a561f]"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Fields Family Vault
+        </a>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="shrink-0 flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900"
-          >
-            <LogOut className="w-4 h-4" />
-            Sign out
-          </button>
-        </div>
+        <header className="mt-6 border-b border-stone-300 pb-7">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#a66b27]">
+            Add to the collection
+          </p>
+          <h1 className="mt-2 font-serif text-4xl text-stone-900 md:text-5xl">
+            Preserve a Memory
+          </h1>
+          <p className="mt-3 max-w-xl text-stone-600">
+            Add the original recording now. Transcripts and family stories can be
+            added later without losing the real voice behind them.
+          </p>
+        </header>
 
-        {message && (
-          <div
-            className={`p-4 rounded-xl flex items-center gap-3 text-sm ${
-              message.type === 'success'
-                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                : 'bg-rose-50 text-rose-800 border border-rose-200'
-            }`}
-          >
-            {message.type === 'success' ? (
-              <CheckCircle className="w-5 h-5 shrink-0" />
-            ) : (
-              <AlertCircle className="w-5 h-5 shrink-0" />
-            )}
-            <span>{message.text}</span>
-          </div>
-        )}
+        <section className="mt-8 rounded-3xl border border-stone-300 bg-[#fffaf0] p-6 shadow-sm md:p-8">
+          {message && (
+            <div
+              className={`mb-6 flex items-center gap-3 rounded-xl border p-4 text-sm ${
+                message.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-rose-200 bg-rose-50 text-rose-800'
+              }`}
+            >
+              {message.type === 'success' ? (
+                <CheckCircle className="h-5 w-5 shrink-0" />
+              ) : (
+                <AlertCircle className="h-5 w-5 shrink-0" />
+              )}
+              {message.text}
+            </div>
+          )}
 
-        <form onSubmit={handleUpload} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Story Title *
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g., How Grandpa Met Grandma"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <form onSubmit={handleUpload} className="space-y-7">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Speaker Name *
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-[#a66b27]" />
+                <label className="text-sm font-semibold text-stone-800">
+                  Belongs in which legacy book? *
+                </label>
+              </div>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {vaults.map((vault) => (
+                  <button
+                    key={vault.name}
+                    type="button"
+                    onClick={() => setVaultPerson(vault.name)}
+                    className={`rounded-2xl border p-4 text-left transition ${
+                      vaultPerson === vault.name
+                        ? 'border-[#b57931] bg-[#f4e7cf] shadow-sm'
+                        : 'border-stone-300 bg-white hover:border-[#b57931]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 font-serif text-lg text-stone-900">
+                      <Headphones className="h-4 w-4 text-[#a66b27]" />
+                      {vault.name}
+                    </span>
+                    <span className="mt-1 block text-xs text-stone-600">
+                      {vault.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-stone-800">
+                Story title *
               </label>
               <input
                 type="text"
                 required
-                placeholder="e.g., Grandpa John"
-                value={speaker}
-                onChange={(e) => setSpeaker(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800"
+                placeholder="Example: How Dad Met Mom"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Category
-              </label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800 bg-white"
-              >
-                <option value="General">General</option>
-                <option value="Childhood">Childhood</option>
-                <option value="Love & Marriage">Love & Marriage</option>
-                <option value="Career & Advice">Career & Advice</option>
-                <option value="Holidays & Family">Holidays & Family</option>
-              </select>
+            <div className="grid gap-5 md:grid-cols-2">
+              <div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <UserRound className="h-4 w-4 text-[#a66b27]" />
+                  <label className="text-sm font-semibold text-stone-800">
+                    Speaker / people heard *
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  required
+                  placeholder="Example: Dad and Dan"
+                  value={speaker}
+                  onChange={(e) => setSpeaker(e.target.value)}
+                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                />
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <Tag className="h-4 w-4 text-[#a66b27]" />
+                  <label className="text-sm font-semibold text-stone-800">
+                    Chapter / category
+                  </label>
+                </div>
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                >
+                  <option value="General">General</option>
+                  <option value="Childhood">Childhood</option>
+                  <option value="Love & Marriage">Love & Marriage</option>
+                  <option value="Military & Work">Military & Work</option>
+                  <option value="Faith">Faith</option>
+                  <option value="Holidays & Family">Holidays & Family</option>
+                  <option value="Life Lessons">Life Lessons</option>
+                </select>
+              </div>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Audio File (.mp3, .m4a, .wav) *
-            </label>
-            <input
-              type="file"
-              accept="audio/*"
-              required
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="w-full px-4 py-2 rounded-xl border border-slate-300 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 text-slate-600 cursor-pointer"
-            />
-          </div>
+            <div>
+              <div className="mb-1.5 flex items-center gap-2">
+                <FileAudio className="h-4 w-4 text-[#a66b27]" />
+                <label className="text-sm font-semibold text-stone-800">
+                  Original audio file *
+                </label>
+              </div>
+              <input
+                type="file"
+                accept="audio/*"
+                required
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="w-full rounded-xl border border-dashed border-stone-400 bg-white px-4 py-3 text-sm text-stone-600 file:mr-4 file:rounded-lg file:border-0 file:bg-[#e8d4ae] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-[#65431f] hover:file:bg-[#dfc28e]"
+              />
+              {file && (
+                <p className="mt-2 text-sm text-stone-600">
+                  Ready to upload: <span className="font-medium">{file.name}</span>
+                </p>
+              )}
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Story Chapter / Notes (Optional)
-            </label>
-            <textarea
-              rows={4}
-              placeholder="Paste a transcript, AI storybook summary, or notes here..."
-              value={storyChapter}
-              onChange={(e) => setStoryChapter(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-800"
-            />
-          </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-stone-800">
+                Story chapter or notes <span className="font-normal">(optional)</span>
+              </label>
+              <textarea
+                rows={5}
+                placeholder="Add notes now, or paste in the reviewed transcript or finished family story later."
+                value={storyChapter}
+                onChange={(e) => setStoryChapter(e.target.value)}
+                className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={uploading}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2"
-          >
-            {uploading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" /> Uploading...
-              </>
-            ) : (
-              <>
-                <Upload className="w-5 h-5" /> Save to Audio Vault
-              </>
-            )}
-          </button>
-        </form>
+            <button
+              type="submit"
+              disabled={uploading}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white transition hover:bg-[#293127] disabled:bg-stone-400"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Saving memory…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-5 w-5" />
+                  Save to {vaultPerson}&apos;s Vault
+                </>
+              )}
+            </button>
+          </form>
+        </section>
       </div>
     </main>
   );
