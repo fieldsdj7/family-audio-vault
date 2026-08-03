@@ -154,7 +154,7 @@ const filteredTracks =
                   Our Family Legacy
                 </p>
                 <h1 className="mt-2 font-serif text-4xl text-stone-900 md:text-5xl">
-                  Dad&apos;s Life
+                  {currentVault.title}
                 </h1>
                 <p className="mt-3 max-w-xl text-stone-600">
                   A living collection of stories, memories, and the voice we
@@ -179,7 +179,7 @@ const filteredTracks =
                       The Legacy Book
                     </p>
                     <h2 className="mt-4 max-w-md font-serif text-4xl leading-tight md:text-5xl">
-                      The stories that made him who he is.
+                      The stories that shaped a life.
                     </h2>
                     <p className="mt-5 max-w-md leading-relaxed text-stone-200">
                       Every recording is a piece of family history, preserved
@@ -192,8 +192,8 @@ const filteredTracks =
                       <Headphones className="h-4 w-4 text-[#e3bb77]" />
                     </span>
                     <span>
-                      {tracks.length} {tracks.length === 1 ? 'recording' : 'recordings'}{' '}
-                      preserved
+                     {personTracks.length}{' '}
+{personTracks.length === 1 ? 'recording' : 'recordings'} preserved
                     </span>
                   </div>
                 </div>
@@ -204,9 +204,7 @@ const filteredTracks =
                     <BookOpen className="h-8 w-8 text-[#80542a]" />
                     <div>
                       <p className="font-serif text-2xl leading-tight text-[#54371f]">
-                        Dad&apos;s
-                        <br />
-                        Life
+                        {currentVault.title}
                       </p>
                       <div className="mt-4 h-px bg-[#9e7140]" />
                       <p className="mt-3 text-[10px] uppercase tracking-[0.18em] text-[#80542a]">
