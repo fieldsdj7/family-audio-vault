@@ -21,6 +21,7 @@ interface AudioTrack {
   created_at: string;
   transcript?: string;
   story_chapter?: string;
+  vault_person?: string;
 }
 
 export default function Home() {
@@ -29,6 +30,19 @@ export default function Home() {
   const [selectedTrack, setSelectedTrack] = useState<AudioTrack | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeCategory, setActiveCategory] = useState('All');
+  const [activePerson, setActivePerson] = useState('Dad');
+
+const vaults = [
+  { name: 'Papa', title: "Papa's Life" },
+  { name: 'Dad', title: "Dad's Life" },
+  { name: 'Mom', title: "Mom's Life" },
+];
+
+const currentVault = vaults.find((vault) => vault.name === activePerson)!;
+
+const personTracks = tracks.filter(
+  (track) => (track.vault_person || 'Dad') === activePerson
+);
 
   useEffect(() => {
     fetchTracks();
@@ -52,15 +66,17 @@ export default function Home() {
     setLoading(false);
   }
 
-  const categories = [
-    'All',
-    ...Array.from(new Set(tracks.map((track) => track.category || 'General'))),
-  ];
+const categories = [
+  'All',
+  ...Array.from(
+    new Set(personTracks.map((track) => track.category || 'General'))
+  ),
+];
 
-  const filteredTracks =
-    activeCategory === 'All'
-      ? tracks
-      : tracks.filter((track) => track.category === activeCategory);
+const filteredTracks =
+  activeCategory === 'All'
+    ? personTracks
+    : personTracks.filter((track) => track.category === activeCategory);
 
   function selectTrack(track: AudioTrack) {
     setSelectedTrack(track);
@@ -83,12 +99,30 @@ export default function Home() {
 
           <nav className="mt-8 flex gap-2 overflow-x-auto lg:block lg:space-y-2">
             <a
-              href="/"
-              className="flex shrink-0 items-center gap-3 rounded-xl bg-white/10 px-4 py-3 text-sm font-medium text-white"
-            >
-              <Headphones className="h-4 w-4 text-[#d8a95f]" />
-              Dad&apos;s Life
-            </a>
+           {vaults.map((vault) => (
+  <button
+    key={vault.name}
+    onClick={() => {
+      setActivePerson(vault.name);
+      setActiveCategory('All');
+
+      const firstTrack = tracks.find(
+        (track) => (track.vault_person || 'Dad') === vault.name
+      );
+
+      setSelectedTrack(firstTrack || null);
+      setIsPlaying(false);
+    }}
+    className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
+      activePerson === vault.name
+        ? 'bg-white/10 font-medium text-white'
+        : 'text-stone-300 hover:bg-white/10 hover:text-white'
+    }`}
+  >
+    <Headphones className="h-4 w-4 text-[#d8a95f]" />
+    {vault.name}
+  </button>
+))}
 
             <a
               href="/admin"
