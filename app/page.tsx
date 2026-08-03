@@ -76,7 +76,7 @@ export default function Home() {
               <BookOpen className="h-5 w-5" />
             </div>
             <div>
-              <p className="font-serif text-lg leading-none">Family Vault</p>
+              <p className="font-serif text-lg leading-none">Fields Family Vault</p>
               <p className="mt-1 text-xs text-stone-400">Stories worth keeping</p>
             </div>
           </div>
@@ -107,6 +107,9 @@ export default function Home() {
               Listen to the voices, stories, and memories that made our family
               who we are.
             </p>
+            <p className="mt-6 border-l-2 border-[#d8a95f] pl-4 font-serif text-lg leading-relaxed text-stone-200">
+  “A people without knowledge of their past is like a tree without roots.”
+</p>
           </div>
         </aside>
 
