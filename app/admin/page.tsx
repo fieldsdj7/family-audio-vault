@@ -11,6 +11,8 @@ import {
   Headphones,
   Loader2,
   Lock,
+  LogOut,
+  Mail,
   Tag,
   Upload,
   UserRound,
@@ -23,15 +25,20 @@ const vaults = [
 ];
 
 export default function AdminUpload() {
+  const [checkingLogin, setCheckingLogin] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passcode, setPasscode] = useState('');
-  const [passcodeError, setPasscodeError] = useState('');
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
 
   const [title, setTitle] = useState('');
   const [speaker, setSpeaker] = useState('');
   const [vaultPerson, setVaultPerson] = useState('Dad');
   const [category, setCategory] = useState('General');
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [storyChapter, setStoryChapter] = useState('');
 
   const [uploading, setUploading] = useState(false);
@@ -41,21 +48,67 @@ export default function AdminUpload() {
   } | null>(null);
 
   useEffect(() => {
-    if (localStorage.getItem('admin_authenticated') === 'true') {
-      setIsAuthenticated(true);
+    async function checkSession() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      setIsAuthenticated(!!session);
+      setCheckingLogin(false);
     }
+
+    checkSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(!!session);
+      setCheckingLogin(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  function handlePasscodeSubmit(e: FormEvent) {
+  async function handleLogin(e: FormEvent) {
     e.preventDefault();
+    setLoginError('');
+    setResetMessage('');
 
-    if (passcode === process.env.NEXT_PUBLIC_ADMIN_PASSCODE) {
-      localStorage.setItem('admin_authenticated', 'true');
-      setIsAuthenticated(true);
-      setPasscodeError('');
-    } else {
-      setPasscodeError('Incorrect passcode. Please try again.');
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setLoginError('That email or password did not work. Please try again.');
     }
+  }
+
+  async function handlePasswordReset() {
+    setLoginError('');
+    setResetMessage('');
+
+    if (!email) {
+      setLoginError('Enter your email address first, then click Forgot password.');
+      return;
+    }
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    if (error) {
+      setLoginError(error.message);
+      return;
+    }
+
+    setResetMessage('Password-reset email sent. Check your inbox.');
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    setEmail('');
+    setPassword('');
   }
 
   async function handleUpload(e: FormEvent) {
@@ -110,16 +163,27 @@ export default function AdminUpload() {
       setVaultPerson('Dad');
       setCategory('General');
       setFile(null);
+      setFileInputKey((key) => key + 1);
       setStoryChapter('');
-    } catch (err: any) {
-      console.error('Upload error:', err);
+    } catch (err: unknown) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Failed to upload audio.';
+
       setMessage({
         type: 'error',
-        text: err.message || 'Failed to upload audio.',
+        text: errorMessage,
       });
     } finally {
       setUploading(false);
     }
+  }
+
+  if (checkingLogin) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] text-stone-700">
+        <Loader2 className="h-7 w-7 animate-spin text-[#a66b27]" />
+      </main>
+    );
   }
 
   if (!isAuthenticated) {
@@ -133,34 +197,63 @@ export default function AdminUpload() {
             <p className="mt-5 text-xs font-semibold uppercase tracking-[0.2em] text-[#e3bb77]">
               Fields Family Vault
             </p>
-            <h1 className="mt-2 font-serif text-3xl">Admin Access</h1>
+            <h1 className="mt-2 font-serif text-3xl">Admin Sign In</h1>
             <p className="mt-3 text-sm leading-relaxed text-stone-300">
-              Enter the passcode to add another family memory.
+              Sign in to preserve another family memory.
             </p>
           </div>
 
-          <form onSubmit={handlePasscodeSubmit} className="space-y-5 p-7">
-            {passcodeError && (
-              <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+          <form onSubmit={handleLogin} className="space-y-5 p-7">
+            {loginError && (
+              <div className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
                 <AlertCircle className="h-4 w-4 shrink-0" />
-                {passcodeError}
+                {loginError}
               </div>
             )}
 
-            <input
-              type="password"
-              required
-              placeholder="Enter admin passcode"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-              className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-center text-lg tracking-widest text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
-            />
+            {resetMessage && (
+              <div className="flex gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                <CheckCircle className="h-4 w-4 shrink-0" />
+                {resetMessage}
+              </div>
+            )}
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold">Email address</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold">Password</label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+              />
+            </div>
 
             <button
               type="submit"
               className="w-full rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white transition hover:bg-[#293127]"
             >
-              Unlock Vault
+              Sign In
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePasswordReset}
+              className="w-full text-sm font-medium text-[#8a561f] hover:underline"
+            >
+              Forgot password?
             </button>
           </form>
         </div>
@@ -171,13 +264,23 @@ export default function AdminUpload() {
   return (
     <main className="min-h-screen bg-[#f6f0e5] p-5 text-stone-800 md:p-10">
       <div className="mx-auto max-w-3xl">
-        <a
-          href="/"
-          className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 transition hover:text-[#8a561f]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Fields Family Vault
-        </a>
+        <div className="flex items-center justify-between gap-4">
+          <a
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 transition hover:text-[#8a561f]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Fields Family Vault
+          </a>
+
+          <button
+            onClick={handleSignOut}
+            className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-[#8a561f]"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </div>
 
         <header className="mt-6 border-b border-stone-300 pb-7">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#a66b27]">
@@ -214,7 +317,7 @@ export default function AdminUpload() {
             <div>
               <div className="flex items-center gap-2">
                 <BookOpen className="h-4 w-4 text-[#a66b27]" />
-                <label className="text-sm font-semibold text-stone-800">
+                <label className="text-sm font-semibold">
                   Belongs in which legacy book? *
                 </label>
               </div>
@@ -244,7 +347,7 @@ export default function AdminUpload() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-semibold text-stone-800">
+              <label className="mb-1.5 block text-sm font-semibold">
                 Story title *
               </label>
               <input
@@ -253,7 +356,7 @@ export default function AdminUpload() {
                 placeholder="Example: How Dad Met Mom"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
               />
             </div>
 
@@ -261,7 +364,7 @@ export default function AdminUpload() {
               <div>
                 <div className="mb-1.5 flex items-center gap-2">
                   <UserRound className="h-4 w-4 text-[#a66b27]" />
-                  <label className="text-sm font-semibold text-stone-800">
+                  <label className="text-sm font-semibold">
                     Speaker / people heard *
                   </label>
                 </div>
@@ -271,21 +374,21 @@ export default function AdminUpload() {
                   placeholder="Example: Dad and Dan"
                   value={speaker}
                   onChange={(e) => setSpeaker(e.target.value)}
-                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
                 />
               </div>
 
               <div>
                 <div className="mb-1.5 flex items-center gap-2">
                   <Tag className="h-4 w-4 text-[#a66b27]" />
-                  <label className="text-sm font-semibold text-stone-800">
+                  <label className="text-sm font-semibold">
                     Chapter / category
                   </label>
                 </div>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                  className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
                 >
                   <option value="General">General</option>
                   <option value="Childhood">Childhood</option>
@@ -301,11 +404,10 @@ export default function AdminUpload() {
             <div>
               <div className="mb-1.5 flex items-center gap-2">
                 <FileAudio className="h-4 w-4 text-[#a66b27]" />
-                <label className="text-sm font-semibold text-stone-800">
-                  Original audio file *
-                </label>
+                <label className="text-sm font-semibold">Original audio file *</label>
               </div>
               <input
+                key={fileInputKey}
                 type="file"
                 accept="audio/*"
                 required
@@ -320,7 +422,7 @@ export default function AdminUpload() {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-semibold text-stone-800">
+              <label className="mb-1.5 block text-sm font-semibold">
                 Story chapter or notes <span className="font-normal">(optional)</span>
               </label>
               <textarea
@@ -328,7 +430,7 @@ export default function AdminUpload() {
                 placeholder="Add notes now, or paste in the reviewed transcript or finished family story later."
                 value={storyChapter}
                 onChange={(e) => setStoryChapter(e.target.value)}
-                className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-800 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
+                className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40"
               />
             </div>
 
