@@ -98,7 +98,6 @@ const filteredTracks =
           </div>
 
           <nav className="mt-8 flex gap-2 overflow-x-auto lg:block lg:space-y-2">
-            <a
            {vaults.map((vault) => (
   <button
     key={vault.name}
