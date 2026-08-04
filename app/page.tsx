@@ -264,6 +264,15 @@ export default function Home() {
                 <Headphones className="h-4 w-4 text-[#d8a95f]" />{vault.name}
               </button>
             ))}
+            {isAdmin && (
+  <a
+    href="/admin"
+    className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm text-stone-300 transition hover:bg-white/10 hover:text-white"
+  >
+    <ShieldCheck className="h-4 w-4 text-[#d8a95f]" />
+    Admin Upload
+  </a>
+)}
           </nav>
           <div className="mt-10 hidden border-t border-white/10 pt-6 lg:block">
             <p className="font-serif text-lg text-stone-200">A family legacy, kept in their own words.</p>
