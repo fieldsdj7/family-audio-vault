@@ -43,6 +43,7 @@ export default function AdminUpload() {
   const [storyChapter, setStoryChapter] = useState('');
 
   const [uploading, setUploading] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const [message, setMessage] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -139,6 +140,7 @@ export default function AdminUpload() {
     const extension = file.name.split('.').pop()?.toLowerCase() || 'audio';
     const filePath = `recordings/${crypto.randomUUID()}.${extension}`;
     let fileWasUploaded = false;
+    let recordingWasSaved = false;
 
     try {
       const { error: uploadError } = await supabase.storage
@@ -148,20 +150,51 @@ export default function AdminUpload() {
       if (uploadError) throw uploadError;
       fileWasUploaded = true;
 
-      const { error: dbError } = await supabase.from('audio_tracks').insert([
-        {
-          title,
-          speaker,
-          category,
-          vault_person: vaultPerson,
-          storage_path: filePath,
-          story_chapter: storyChapter || null,
-        },
-      ]);
+      const { data: savedTrack, error: dbError } = await supabase
+        .from('audio_tracks')
+        .insert([
+          {
+            title,
+            speaker,
+            category,
+            vault_person: vaultPerson,
+            storage_path: filePath,
+            story_chapter: storyChapter || null,
+            transcription_status: 'queued',
+          },
+        ])
+        .select('id')
+        .single();
 
       if (dbError) throw dbError;
+      recordingWasSaved = true;
 
-      setMessage({ type: 'success', text: `Saved to ${vaultPerson}'s vault.` });
+      setTranscribing(true);
+      setMessage({ type: 'success', text: 'Saved. Creating the word-for-word transcript now…' });
+
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      const transcriptionResponse = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({ trackId: savedTrack.id }),
+      });
+
+      const transcriptionResult = (await transcriptionResponse.json()) as { error?: string };
+      if (!transcriptionResponse.ok) {
+        setMessage({
+          type: 'error',
+          text: `The recording was saved, but the transcript could not be created: ${transcriptionResult.error || 'Unknown error'}`,
+        });
+        return;
+      }
+
+      setMessage({ type: 'success', text: `Saved to ${vaultPerson}'s vault and transcribed.` });
       setTitle('');
       setSpeaker('');
       setVaultPerson('Dad');
@@ -170,7 +203,7 @@ export default function AdminUpload() {
       setFileInputKey((key) => key + 1);
       setStoryChapter('');
     } catch (err: unknown) {
-      if (fileWasUploaded) {
+      if (fileWasUploaded && !recordingWasSaved) {
         await supabase.storage.from('audio-files').remove([filePath]);
       }
 
@@ -180,6 +213,7 @@ export default function AdminUpload() {
       });
     } finally {
       setUploading(false);
+      setTranscribing(false);
     }
   }
 
@@ -304,7 +338,7 @@ export default function AdminUpload() {
 
             <div><label className="mb-1.5 block text-sm font-semibold">Story chapter or notes <span className="font-normal">(optional)</span></label><textarea rows={5} placeholder="Add notes now, or paste in the reviewed transcript or finished family story later." value={storyChapter} onChange={(e) => setStoryChapter(e.target.value)} className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div>
 
-            <button type="submit" disabled={uploading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white transition hover:bg-[#293127] disabled:bg-stone-400">{uploading ? <><Loader2 className="h-5 w-5 animate-spin" />Saving memory…</> : <><Upload className="h-5 w-5" />Save to {vaultPerson}&apos;s Vault</>}</button>
+            <button type="submit" disabled={uploading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white transition hover:bg-[#293127] disabled:bg-stone-400">{uploading ? <><Loader2 className="h-5 w-5 animate-spin" />{transcribing ? 'Transcribing recording…' : 'Saving memory…'}</> : <><Upload className="h-5 w-5" />Save to {vaultPerson}&apos;s Vault</>}</button>
           </form>
         </section>
       </div>
