@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabaseClient';
+import JSZip from 'jszip';
 import {
   AlertCircle,
   ArrowLeft,
@@ -20,6 +21,7 @@ import {
   Tag,
   Upload,
   UserRound,
+    Download,
 } from 'lucide-react';
 
 const vaults = [
@@ -39,6 +41,8 @@ type AudioTrack = {
   story_title?: string | null;
   story_chapter?: string | null;
   transcription_status?: string | null;
+  storage_path?: string | null;
+  audio_url?: string | null;
 };
 
 export default function AdminUpload() {
@@ -75,7 +79,8 @@ export default function AdminUpload() {
   const [reTranscribing, setReTranscribing] = useState(false);
   const [creatingStory, setCreatingStory] = useState(false);
   const [editorMessage, setEditorMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
+const [backingUp, setBackingUp] = useState(false);
+const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) || null;
 
   useEffect(() => {
@@ -272,6 +277,185 @@ export default function AdminUpload() {
     await fetchTracks(selectedTrack.id);
   }
 
+    function safeFilePart(value: string) {
+    return (value || 'untitled')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 90);
+  }
+
+  function saveBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function downloadFullVaultBackup() {
+    setBackingUp(true);
+    setBackupMessage(null);
+
+    try {
+      const { data, error } = await supabase
+        .from('audio_tracks')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const backupTracks = (data || []) as AudioTrack[];
+      const zip = new JSZip();
+      const missingAudio: string[] = [];
+      const index: Array<Record<string, string | null>> = [];
+
+      zip.file(
+        'README.txt',
+        [
+          'Fields Family Vault Backup',
+          `Created: ${new Date().toLocaleString()}`,
+          '',
+          'This backup contains the original audio recordings, word-for-word transcripts,',
+          'book-style family stories, and an index of the saved vault information.',
+          '',
+          'Folders:',
+          '- audio: original recordings',
+          '- transcripts: editable word-for-word transcripts',
+          '- stories: book-style stories created from reviewed transcripts',
+          '- metadata: an index file for the entire collection',
+        ].join('\n')
+      );
+
+      for (let i = 0; i < backupTracks.length; i += 1) {
+        const track = backupTracks[i];
+        const date = new Date(track.created_at);
+        const datePart = Number.isNaN(date.getTime())
+          ? 'unknown-date'
+          : date.toISOString().slice(0, 10);
+        const baseName = `${String(i + 1).padStart(3, '0')}-${datePart}-${safeFilePart(track.title)}`;
+
+        setBackupMessage({
+          type: 'success',
+          text: `Collecting recording ${i + 1} of ${backupTracks.length}… Keep this page open until the download starts.`,
+        });
+
+        zip.file(
+          `transcripts/${baseName}.txt`,
+          [
+            `Title: ${track.title}`,
+            `Vault: ${track.vault_person || 'Not specified'}`,
+            `Speaker: ${track.speaker || 'Not specified'}`,
+            `Category: ${track.category || 'General'}`,
+            `Recorded: ${date.toLocaleString()}`,
+            '',
+            track.transcript || '[No transcript saved]',
+          ].join('\n')
+        );
+
+        if (track.story_chapter || track.story_title) {
+          zip.file(
+            `stories/${baseName}.txt`,
+            [
+              `Title: ${track.story_title || track.title}`,
+              `Source recording: ${track.title}`,
+              `Vault: ${track.vault_person || 'Not specified'}`,
+              `Recorded: ${date.toLocaleString()}`,
+              '',
+              track.story_chapter || '[No book-style story saved]',
+            ].join('\n')
+          );
+        }
+
+        const audioFileName = `${baseName}.${(track.storage_path || track.audio_url || 'audio').split('.').pop()?.split('?')[0] || 'audio'}`;
+
+        index.push({
+          id: track.id,
+          title: track.title || null,
+          vault_person: track.vault_person || null,
+          speaker: track.speaker || null,
+          category: track.category || null,
+          created_at: track.created_at || null,
+          transcript_status: track.transcription_status || null,
+          transcript_file: `transcripts/${baseName}.txt`,
+          story_title: track.story_title || null,
+          story_file: track.story_chapter || track.story_title ? `stories/${baseName}.txt` : null,
+          audio_file: `audio/${audioFileName}`,
+        });
+
+        let audioBlob: Blob | null = null;
+
+        if (track.storage_path) {
+          const { data: fileData, error: fileError } = await supabase.storage
+            .from('audio-files')
+            .download(track.storage_path);
+
+          if (fileError) {
+            missingAudio.push(`${track.title}: ${fileError.message}`);
+          } else {
+            audioBlob = fileData;
+          }
+        } else if (track.audio_url) {
+          const response = await fetch(track.audio_url);
+          if (!response.ok) {
+            missingAudio.push(`${track.title}: Could not download legacy audio file.`);
+          } else {
+            audioBlob = await response.blob();
+          }
+        } else {
+          missingAudio.push(`${track.title}: No audio-file location was saved.`);
+        }
+
+        if (audioBlob) {
+          zip.file(`audio/${audioFileName}`, audioBlob);
+        }
+      }
+
+      zip.file('metadata/vault-index.json', JSON.stringify(index, null, 2));
+
+      if (missingAudio.length > 0) {
+        zip.file(
+          'MISSING-AUDIO-FILES.txt',
+          [
+            'These recordings were included as transcripts/stories, but their audio file could not be added:',
+            '',
+            ...missingAudio,
+          ].join('\n')
+        );
+      }
+
+      setBackupMessage({
+        type: 'success',
+        text: 'Building your ZIP file now…',
+      });
+
+      const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      });
+
+      const today = new Date().toISOString().slice(0, 10);
+      saveBlob(zipBlob, `fields-family-vault-backup-${today}.zip`);
+
+      setBackupMessage({
+        type: 'success',
+        text: missingAudio.length
+          ? 'Backup downloaded. See MISSING-AUDIO-FILES.txt inside the ZIP for items that need attention.'
+          : 'Full vault backup downloaded successfully.',
+      });
+    } catch (err: unknown) {
+      setBackupMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'The backup could not be created.',
+      });
+    } finally {
+      setBackingUp(false);
+    }
+  }
   async function handleUpload(e: FormEvent) {
     e.preventDefault();
 
@@ -491,6 +675,30 @@ export default function AdminUpload() {
           </form>
         </section>
 
+                <section className="mt-10 rounded-3xl border border-stone-300 bg-[#fffaf0] p-6 shadow-sm md:p-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a66b27]">Backup & Preserve</p>
+          <h2 className="mt-2 font-serif text-3xl text-stone-900">Download Full Vault Backup</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-stone-600">
+            Creates one ZIP file with every original audio recording, transcript, family story, and a readable index. Keep the page open while it gathers the files.
+          </p>
+
+          {backupMessage && (
+            <div className={`mt-5 flex gap-3 rounded-xl border p-4 text-sm ${backupMessage.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+              {backupMessage.type === 'success' ? <CheckCircle className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
+              {backupMessage.text}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void downloadFullVaultBackup()}
+            disabled={backingUp}
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3 font-semibold text-white transition hover:bg-[#293127] disabled:cursor-not-allowed disabled:bg-stone-400"
+          >
+            {backingUp ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
+            {backingUp ? 'Creating backup…' : 'Download Full Vault Backup'}
+          </button>
+        </section>
         <section className="mt-10 rounded-3xl border border-stone-300 bg-[#fffaf0] p-6 shadow-sm md:p-8">
           <div className="flex flex-col gap-3 border-b border-stone-200 pb-6 sm:flex-row sm:items-start sm:justify-between">
             <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a66b27]">Story Studio</p><h2 className="mt-2 font-serif text-3xl text-stone-900">Transcripts & family stories</h2><p className="mt-2 max-w-xl text-sm leading-relaxed text-stone-600">Edit the exact transcript, copy it, make a fresh transcription, or turn it into a readable story. The audio file is never changed.</p></div>
