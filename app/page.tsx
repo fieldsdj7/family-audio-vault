@@ -12,6 +12,7 @@ import {
   Lock,
   LogOut,
   Play,
+  ShieldCheck,
   Tag,
   User,
   Volume2,
@@ -59,7 +60,7 @@ export default function Home() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [resetMessage, setResetMessage] = useState('');
-
+  const [isAdmin, setIsAdmin] = useState(false);
   const currentVault = vaults.find((vault) => vault.name === activePerson)!;
   const personTracks = tracks.filter(
     (track) => (track.vault_person || 'Dad') === activePerson
@@ -82,7 +83,16 @@ export default function Home() {
       setIsAuthenticated(!!session);
       setCheckingLogin(false);
 
-      if (session) await fetchTracks();
+      if (session) {
+  const { data } = await supabase
+    .from('vault_admins')
+    .select('user_id')
+    .eq('user_id', session.user.id)
+    .maybeSingle();
+
+  setIsAdmin(!!data);
+  await fetchTracks();
+}
     }
 
     void checkSession();
