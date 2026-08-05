@@ -29,17 +29,29 @@ type Track = {
   transcript: string | null;
   story_chapter: string | null;
   transcription_status: string | null;
-  audio_track_reviews: TrackReview[];
+  audio_track_reviews?: TrackReview[] | null;
 };
 type Question = {
   id: string;
   card_number: number | null;
   question_text: string;
-  question_card_progress: { vault_person: VaultPerson; status: string }[];
+  question_card_progress?: { vault_person: VaultPerson; status: string }[] | null;
 };
+
+type ReviewKind = 'missingTranscript' | 'reviewTranscript' | 'missingStory' | 'approveStory';
 
 function personName(person: string | null) {
   return person === 'Mom' ? 'Mom / Ivy' : person || 'Dad';
+}
+
+function reviewsFor(track: Track) {
+  return Array.isArray(track.audio_track_reviews) ? track.audio_track_reviews : [];
+}
+
+function progressFor(question: Question) {
+  return Array.isArray(question.question_card_progress)
+    ? question.question_card_progress
+    : [];
 }
 
 export default function NeedsReviewPage() {
@@ -63,8 +75,14 @@ export default function NeedsReviewPage() {
         .select('id, card_number, question_text, question_card_progress(vault_person, status)')
         .order('card_number', { ascending: true, nullsFirst: false }),
     ]);
+
     if (tracksResult.error || questionsResult.error) {
-      setMessage({ type: 'error', text: tracksResult.error?.message || questionsResult.error?.message || 'Could not load the review list.' });
+      setMessage({
+        type: 'error',
+        text: tracksResult.error?.message || questionsResult.error?.message || 'Could not load the review list.',
+      });
+      setTracks([]);
+      setQuestions([]);
     } else {
       setTracks((tracksResult.data || []) as Track[]);
       setQuestions((questionsResult.data || []) as Question[]);
@@ -74,46 +92,65 @@ export default function NeedsReviewPage() {
 
   useEffect(() => {
     async function start() {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       if (!session) {
         setCheckingAccess(false);
         setLoading(false);
         return;
       }
+
       const { data: admin } = await supabase
         .from('vault_admins')
         .select('user_id')
         .eq('user_id', session.user.id)
         .maybeSingle();
+
       const allowed = !!admin;
       setIsAdmin(allowed);
       setCheckingAccess(false);
+
       if (allowed) await loadData();
       else setLoading(false);
     }
+
     void start();
   }, []);
 
   const questionItems = useMemo(
-    () => questions.flatMap((question) => question.question_card_progress
-      .filter((progress) => progress.status === 'needs_review')
-      .map((progress) => ({ question, person: progress.vault_person }))),
+    () =>
+      questions.flatMap((question) =>
+        progressFor(question)
+          .filter((progress) => progress.status === 'needs_review')
+          .map((progress) => ({ question, person: progress.vault_person }))
+      ),
     [questions]
   );
-  const trackItems = useMemo(() => tracks.flatMap((track) => {
-    const review = track.audio_track_reviews[0];
-    const items: { track: Track; kind: 'missingTranscript' | 'reviewTranscript' | 'missingStory' | 'approveStory' }[] = [];
-    if (!track.transcript?.trim()) items.push({ track, kind: 'missingTranscript' });
-    else if (!review?.transcript_reviewed_at) items.push({ track, kind: 'reviewTranscript' });
-    if (!track.story_chapter?.trim()) items.push({ track, kind: 'missingStory' });
-    else if (!review?.story_approved_at) items.push({ track, kind: 'approveStory' });
-    return items;
-  }), [tracks]);
+
+  const trackItems = useMemo(
+    () =>
+      tracks.flatMap((track) => {
+        const review = reviewsFor(track)[0];
+        const items: { track: Track; kind: ReviewKind }[] = [];
+
+        if (!track.transcript?.trim()) items.push({ track, kind: 'missingTranscript' });
+        else if (!review?.transcript_reviewed_at) items.push({ track, kind: 'reviewTranscript' });
+
+        if (!track.story_chapter?.trim()) items.push({ track, kind: 'missingStory' });
+        else if (!review?.story_approved_at) items.push({ track, kind: 'approveStory' });
+
+        return items;
+      }),
+    [tracks]
+  );
 
   async function markReviewed(track: Track, field: 'transcript_reviewed_at' | 'story_approved_at') {
     setSavingId(`${track.id}-${field}`);
     setMessage(null);
-    const existing = track.audio_track_reviews[0];
+
+    const existing = reviewsFor(track)[0];
     const { error } = await supabase.from('audio_track_reviews').upsert({
       audio_track_id: track.id,
       transcript_reviewed_at: existing?.transcript_reviewed_at || null,
@@ -121,16 +158,30 @@ export default function NeedsReviewPage() {
       notes: existing?.notes || null,
       [field]: new Date().toISOString(),
     });
+
     setSavingId(null);
-    if (error) setMessage({ type: 'error', text: error.message });
-    else {
-      setMessage({ type: 'success', text: field === 'transcript_reviewed_at' ? 'Transcript marked as checked.' : 'Family story marked as approved.' });
-      await loadData();
+
+    if (error) {
+      setMessage({ type: 'error', text: error.message });
+      return;
     }
+
+    setMessage({
+      type: 'success',
+      text: field === 'transcript_reviewed_at'
+        ? 'Transcript marked as checked.'
+        : 'Family story marked as approved.',
+    });
+    await loadData();
   }
 
-  if (checkingAccess || loading) return <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] text-stone-700"><Loader2 className="h-7 w-7 animate-spin text-[#a66b27]" /></main>;
-  if (!isAdmin) return <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800"><div className="w-full max-w-md rounded-3xl border border-stone-300 bg-[#fffaf0] p-8 text-center shadow-xl"><ShieldCheck className="mx-auto h-10 w-10 text-[#a66b27]" /><h1 className="mt-4 font-serif text-3xl text-stone-900">Needs Review is private</h1><p className="mt-3 text-sm leading-relaxed text-stone-600">Only vault administrators can review and organize the collection.</p><a href="/" className="mt-6 inline-flex rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white hover:bg-[#293127]">Return to the vault</a></div></main>;
+  if (checkingAccess || loading) {
+    return <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] text-stone-700"><Loader2 className="h-7 w-7 animate-spin text-[#a66b27]" /></main>;
+  }
+
+  if (!isAdmin) {
+    return <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800"><div className="w-full max-w-md rounded-3xl border border-stone-300 bg-[#fffaf0] p-8 text-center shadow-xl"><ShieldCheck className="mx-auto h-10 w-10 text-[#a66b27]" /><h1 className="mt-4 font-serif text-3xl text-stone-900">Needs Review is private</h1><p className="mt-3 text-sm leading-relaxed text-stone-600">Only vault administrators can review and organize the collection.</p><a href="/" className="mt-6 inline-flex rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white hover:bg-[#293127]">Return to the vault</a></div></main>;
+  }
 
   const total = questionItems.length + trackItems.length;
   const itemInfo = {
