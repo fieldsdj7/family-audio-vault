@@ -35,10 +35,12 @@ interface AudioTrack {
   playback_url?: string;
 }
 
+type VaultName = 'Papa' | 'Dad' | 'Mom';
+
 const vaults = [
-  { name: 'Papa', title: "Papa's Life" },
-  { name: 'Dad', title: "Dad's Life" },
-  { name: 'Mom', title: "Mom's Life" },
+  { name: 'Papa' as VaultName, title: "Papa's Life" },
+  { name: 'Dad' as VaultName, title: "Dad's Life" },
+  { name: 'Mom' as VaultName, title: "Mom's Life" },
 ];
 
 function getStoragePath(track: AudioTrack) {
@@ -66,10 +68,14 @@ export default function Home() {
   const [resetMessage, setResetMessage] = useState('');
   const [deletingTrackId, setDeletingTrackId] = useState<string | null>(null);
   const [downloadingTrackId, setDownloadingTrackId] = useState<string | null>(null);
+  const [accessibleVaults, setAccessibleVaults] = useState<VaultName[]>([]);
 
-  const currentVault = vaults.find((vault) => vault.name === activePerson)!;
+  const availableVaults = vaults.filter((vault) => accessibleVaults.includes(vault.name));
+  const currentVault = availableVaults.find((vault) => vault.name === activePerson) || availableVaults[0];
   const personTracks = tracks.filter(
-    (track) => (track.vault_person || 'Dad') === activePerson
+    (track) =>
+      accessibleVaults.includes((track.vault_person || 'Dad') as VaultName) &&
+      (track.vault_person || 'Dad') === activePerson
   );
   const categories = [
     'All',
@@ -86,18 +92,12 @@ export default function Home() {
         data: { session },
       } = await supabase.auth.getSession();
 
+      if (session) {
+        await loadVaultForUser(session.user.id);
+      }
+
       setIsAuthenticated(!!session);
       setCheckingLogin(false);
-
-      if (session) {
-        const { data } = await supabase
-          .from('vault_admins')
-          .select('user_id')
-          .eq('user_id', session.user.id)
-          .maybeSingle();
-        setIsAdmin(!!data);
-        await fetchTracks();
-      }
     }
 
     void checkSession();
@@ -105,28 +105,68 @@ export default function Home() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setCheckingLogin(true);
       setIsAuthenticated(!!session);
-      setCheckingLogin(false);
 
       if (session) {
-        const { data } = await supabase
-          .from('vault_admins')
-          .select('user_id')
-          .eq('user_id', session.user.id)
-          .maybeSingle();
-        setIsAdmin(!!data);
-        void fetchTracks();
+        await loadVaultForUser(session.user.id);
       } else {
         setIsAdmin(false);
+        setAccessibleVaults([]);
         setTracks([]);
         setSelectedTrack(null);
       }
+
+      setCheckingLogin(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  async function fetchTracks() {
+  async function loadVaultForUser(userId: string) {
+    const { data: adminRecord } = await supabase
+      .from('vault_admins')
+      .select('user_id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const userIsAdmin = !!adminRecord;
+    setIsAdmin(userIsAdmin);
+
+    let permittedVaults: VaultName[] = vaults.map((vault) => vault.name);
+
+    if (!userIsAdmin) {
+      const { data, error } = await supabase
+        .from('vault_access')
+        .select('vault_person')
+        .eq('user_id', userId);
+
+      permittedVaults = error
+        ? []
+        : (data || [])
+            .map((access) => access.vault_person as VaultName)
+            .filter((name): name is VaultName => vaults.some((vault) => vault.name === name));
+    }
+
+    setAccessibleVaults(permittedVaults);
+
+    const nextActivePerson = permittedVaults.includes(activePerson as VaultName)
+      ? (activePerson as VaultName)
+      : permittedVaults[0];
+
+    if (!nextActivePerson) {
+      setTracks([]);
+      setSelectedTrack(null);
+      setLoading(false);
+      return;
+    }
+
+    setActivePerson(nextActivePerson);
+    setActiveCategory('All');
+    await fetchTracks(nextActivePerson);
+  }
+
+  async function fetchTracks(preferredPerson: VaultName) {
     setLoading(true);
 
     const { data, error } = await supabase
@@ -161,10 +201,10 @@ export default function Home() {
     );
 
     setTracks(tracksWithSecureLinks);
-    const firstDadTrack = tracksWithSecureLinks.find(
-      (track) => (track.vault_person || 'Dad') === 'Dad'
+    const firstAvailableTrack = tracksWithSecureLinks.find(
+      (track) => (track.vault_person || 'Dad') === preferredPerson
     );
-    setSelectedTrack(firstDadTrack || null);
+    setSelectedTrack(firstAvailableTrack || null);
     setLoading(false);
   }
 
@@ -333,6 +373,27 @@ export default function Home() {
     );
   }
 
+  if (!currentVault) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800">
+        <div className="w-full max-w-md rounded-3xl border border-stone-300 bg-[#fffaf0] p-8 text-center shadow-xl">
+          <Lock className="mx-auto h-10 w-10 text-[#a66b27]" />
+          <h1 className="mt-4 font-serif text-3xl text-stone-900">No vault access yet</h1>
+          <p className="mt-3 text-sm leading-relaxed text-stone-600">
+            This account has not been assigned to a family vault. Please ask an administrator to add access.
+          </p>
+          <button
+            onClick={handleSignOut}
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white hover:bg-[#293127]"
+          >
+            <LogOut className="h-4 w-4" />
+            Sign out
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f0e5] text-stone-800">
       <div className="grid min-w-0 min-h-screen lg:grid-cols-[250px_minmax(0,1fr)]">
@@ -341,19 +402,17 @@ export default function Home() {
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#c98b3c] text-[#20221e]"><BookOpen className="h-5 w-5" /></div>
             <div><p className="font-serif text-lg leading-none">Fields Family Vault</p><p className="mt-1 text-xs text-stone-400">Stories worth keeping</p></div>
           </div>
-          {/* Mobile uses four equal-width tabs so every link fits without horizontal scrolling.
-              Desktop keeps the original full-width sidebar buttons with icons. */}
-          <nav className="mt-8 grid min-w-0 grid-cols-4 gap-1 lg:block lg:space-y-2">
-            {vaults.map((vault) => (
-              <button key={vault.name} onClick={() => { setActivePerson(vault.name); setActiveCategory('All'); setSelectedTrack(tracks.find((track) => (track.vault_person || 'Dad') === vault.name) || null); setIsPlaying(false); }} className={`flex min-w-0 items-center justify-center rounded-xl px-1 py-3 text-center text-sm transition lg:w-full lg:justify-start lg:gap-3 lg:px-4 lg:text-left ${activePerson === vault.name ? 'bg-white/10 font-medium text-white' : 'text-stone-300 hover:bg-white/10 hover:text-white'}`}>
-                <Headphones className="hidden h-4 w-4 shrink-0 text-[#d8a95f] lg:block" />{vault.name}
+          {/* FUTURE EDIT NOTE: the mobile tab row intentionally scrolls inside this nav.
+              Keep max-w-full, min-w-0, and the button shrink settings so the whole page stays phone-width. */}
+          <nav className="mt-8 flex max-w-full min-w-0 gap-2 overflow-x-auto lg:block lg:space-y-2">
+            {availableVaults.map((vault) => (
+              <button key={vault.name} onClick={() => { setActivePerson(vault.name); setActiveCategory('All'); setSelectedTrack(tracks.find((track) => (track.vault_person || 'Dad') === vault.name) || null); setIsPlaying(false); }} className={`flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm transition lg:w-full lg:whitespace-normal ${activePerson === vault.name ? 'bg-white/10 font-medium text-white' : 'text-stone-300 hover:bg-white/10 hover:text-white'}`}>
+                <Headphones className="h-4 w-4 text-[#d8a95f]" />{vault.name}
               </button>
             ))}
             {isAdmin && (
-              <a href="/admin" className="flex min-w-0 items-center justify-center rounded-xl px-1 py-3 text-center text-sm text-stone-300 transition hover:bg-white/10 hover:text-white lg:w-full lg:justify-start lg:gap-3 lg:px-4 lg:text-left">
-                <ShieldCheck className="hidden h-4 w-4 shrink-0 text-[#d8a95f] lg:block" />
-                <span className="lg:hidden">Admin</span>
-                <span className="hidden lg:inline">Admin Upload</span>
+              <a href="/admin" className="flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm text-stone-300 transition hover:bg-white/10 hover:text-white lg:w-full lg:whitespace-normal">
+                <ShieldCheck className="h-4 w-4 text-[#d8a95f]" />Admin Upload
               </a>
             )}
           </nav>
