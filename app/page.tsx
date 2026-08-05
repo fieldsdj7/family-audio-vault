@@ -341,17 +341,19 @@ export default function Home() {
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#c98b3c] text-[#20221e]"><BookOpen className="h-5 w-5" /></div>
             <div><p className="font-serif text-lg leading-none">Fields Family Vault</p><p className="mt-1 text-xs text-stone-400">Stories worth keeping</p></div>
           </div>
-          {/* FUTURE EDIT NOTE: the mobile tab row intentionally scrolls inside this nav.
-              Keep max-w-full, min-w-0, and the button shrink settings so the whole page stays phone-width. */}
-          <nav className="mt-8 flex max-w-full min-w-0 gap-2 overflow-x-auto lg:block lg:space-y-2">
+          {/* Mobile uses four equal-width tabs so every link fits without horizontal scrolling.
+              Desktop keeps the original full-width sidebar buttons with icons. */}
+          <nav className="mt-8 grid min-w-0 grid-cols-4 gap-1 lg:block lg:space-y-2">
             {vaults.map((vault) => (
-              <button key={vault.name} onClick={() => { setActivePerson(vault.name); setActiveCategory('All'); setSelectedTrack(tracks.find((track) => (track.vault_person || 'Dad') === vault.name) || null); setIsPlaying(false); }} className={`flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm transition lg:w-full lg:whitespace-normal ${activePerson === vault.name ? 'bg-white/10 font-medium text-white' : 'text-stone-300 hover:bg-white/10 hover:text-white'}`}>
-                <Headphones className="h-4 w-4 text-[#d8a95f]" />{vault.name}
+              <button key={vault.name} onClick={() => { setActivePerson(vault.name); setActiveCategory('All'); setSelectedTrack(tracks.find((track) => (track.vault_person || 'Dad') === vault.name) || null); setIsPlaying(false); }} className={`flex min-w-0 items-center justify-center rounded-xl px-1 py-3 text-center text-sm transition lg:w-full lg:justify-start lg:gap-3 lg:px-4 lg:text-left ${activePerson === vault.name ? 'bg-white/10 font-medium text-white' : 'text-stone-300 hover:bg-white/10 hover:text-white'}`}>
+                <Headphones className="hidden h-4 w-4 shrink-0 text-[#d8a95f] lg:block" />{vault.name}
               </button>
             ))}
             {isAdmin && (
-              <a href="/admin" className="flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm text-stone-300 transition hover:bg-white/10 hover:text-white lg:w-full lg:whitespace-normal">
-                <ShieldCheck className="h-4 w-4 text-[#d8a95f]" />Admin Upload
+              <a href="/admin" className="flex min-w-0 items-center justify-center rounded-xl px-1 py-3 text-center text-sm text-stone-300 transition hover:bg-white/10 hover:text-white lg:w-full lg:justify-start lg:gap-3 lg:px-4 lg:text-left">
+                <ShieldCheck className="hidden h-4 w-4 shrink-0 text-[#d8a95f] lg:block" />
+                <span className="lg:hidden">Admin</span>
+                <span className="hidden lg:inline">Admin Upload</span>
               </a>
             )}
           </nav>
