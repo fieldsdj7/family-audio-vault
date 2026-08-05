@@ -11,7 +11,7 @@ import {
   Save,
   ShieldCheck,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase } from '../../../lib/supabaseClient';
 
 type QuestionStatus =
   | 'not_started'
