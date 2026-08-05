@@ -61,30 +61,53 @@ export default function NeedsReviewPage() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [completedReviewItems, setCompletedReviewItems] = useState<Set<string>>(
+    () => new Set()
+  );
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   async function loadData() {
     setLoading(true);
-    const [tracksResult, questionsResult] = await Promise.all([
+    const [tracksResult, questionsResult, reviewsResult] = await Promise.all([
       supabase
         .from('audio_tracks')
-        .select('id, title, speaker, vault_person, category, created_at, transcript, story_chapter, transcription_status, audio_track_reviews(transcript_reviewed_at, story_approved_at, notes)')
+        .select('id, title, speaker, vault_person, category, created_at, transcript, story_chapter, transcription_status')
         .order('created_at', { ascending: false }),
       supabase
         .from('question_cards')
         .select('id, card_number, question_text, question_card_progress(vault_person, status)')
         .order('card_number', { ascending: true, nullsFirst: false }),
+      supabase
+        .from('audio_track_reviews')
+        .select('audio_track_id, transcript_reviewed_at, story_approved_at, notes'),
     ]);
 
-    if (tracksResult.error || questionsResult.error) {
+    if (tracksResult.error || questionsResult.error || reviewsResult.error) {
       setMessage({
         type: 'error',
-        text: tracksResult.error?.message || questionsResult.error?.message || 'Could not load the review list.',
+        text:
+          tracksResult.error?.message ||
+          questionsResult.error?.message ||
+          reviewsResult.error?.message ||
+          'Could not load the review list.',
       });
       setTracks([]);
       setQuestions([]);
     } else {
-      setTracks((tracksResult.data || []) as Track[]);
+      const reviewsByTrackId = new Map(
+        (reviewsResult.data || []).map((review) => [review.audio_track_id, review])
+      );
+      setTracks(
+        ((tracksResult.data || []) as Track[]).map((track) => {
+          const review = reviewsByTrackId.get(track.id);
+          return {
+            ...track,
+            audio_track_reviews: review
+              ? [{ transcript_reviewed_at: review.transcript_reviewed_at, story_approved_at: review.story_approved_at, notes: review.notes }]
+              : [],
+          };
+        })
+      );
       setQuestions((questionsResult.data || []) as Question[]);
     }
     setLoading(false);
@@ -136,14 +159,20 @@ export default function NeedsReviewPage() {
         const items: { track: Track; kind: ReviewKind }[] = [];
 
         if (!track.transcript?.trim()) items.push({ track, kind: 'missingTranscript' });
-        else if (!review?.transcript_reviewed_at) items.push({ track, kind: 'reviewTranscript' });
+        else if (
+          !review?.transcript_reviewed_at &&
+          !completedReviewItems.has(`${track.id}-transcript_reviewed_at`)
+        ) items.push({ track, kind: 'reviewTranscript' });
 
         if (!track.story_chapter?.trim()) items.push({ track, kind: 'missingStory' });
-        else if (!review?.story_approved_at) items.push({ track, kind: 'approveStory' });
+        else if (
+          !review?.story_approved_at &&
+          !completedReviewItems.has(`${track.id}-story_approved_at`)
+        ) items.push({ track, kind: 'approveStory' });
 
         return items;
       }),
-    [tracks]
+    [tracks, completedReviewItems]
   );
 
   async function markReviewed(track: Track, field: 'transcript_reviewed_at' | 'story_approved_at') {
@@ -151,13 +180,15 @@ export default function NeedsReviewPage() {
     setMessage(null);
 
     const existing = reviewsFor(track)[0];
+    const completedAt = new Date().toISOString();
+    const completedItemKey = `${track.id}-${field}`;
     const { error } = await supabase.from('audio_track_reviews').upsert({
       audio_track_id: track.id,
       transcript_reviewed_at: existing?.transcript_reviewed_at || null,
       story_approved_at: existing?.story_approved_at || null,
       notes: existing?.notes || null,
-      [field]: new Date().toISOString(),
-    });
+      [field]: completedAt,
+    }, { onConflict: 'audio_track_id' });
 
     setSavingId(null);
 
@@ -166,13 +197,39 @@ export default function NeedsReviewPage() {
       return;
     }
 
+    // Update the screen immediately after Supabase confirms the save. This avoids
+    // a delayed nested relationship read leaving a completed item on the list.
+    setTracks((currentTracks) =>
+      currentTracks.map((currentTrack) => {
+        if (currentTrack.id !== track.id) return currentTrack;
+
+        const currentReview = reviewsFor(currentTrack)[0];
+        return {
+          ...currentTrack,
+          audio_track_reviews: [
+            {
+              transcript_reviewed_at:
+                field === 'transcript_reviewed_at'
+                  ? completedAt
+                  : currentReview?.transcript_reviewed_at || null,
+              story_approved_at:
+                field === 'story_approved_at'
+                  ? completedAt
+                  : currentReview?.story_approved_at || null,
+              notes: currentReview?.notes || null,
+            },
+          ],
+        };
+      })
+    );
+    setCompletedReviewItems((current) => new Set(current).add(completedItemKey));
+
     setMessage({
       type: 'success',
       text: field === 'transcript_reviewed_at'
         ? 'Transcript marked as checked.'
         : 'Family story marked as approved.',
     });
-    await loadData();
   }
 
   if (checkingAccess || loading) {
