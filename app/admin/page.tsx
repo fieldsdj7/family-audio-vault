@@ -22,6 +22,7 @@ import {
   Upload,
   UserRound,
     Download,
+    Wrench,
 } from 'lucide-react';
 
 const vaults = [
@@ -536,6 +537,16 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
       setFileInputKey((key) => key + 1);
       setStoryChapter('');
     } catch (err: unknown) {
+
+
+
+
+
+
+
+
+
+      
       if (fileWasUploaded && !recordingWasSaved) {
         await supabase.storage.from('audio-files').remove([filePath]);
       }
@@ -624,14 +635,24 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
   return (
     <main className="min-h-screen bg-[#f6f0e5] p-5 text-stone-800 md:p-10">
       <div className="mx-auto max-w-3xl">
-        <div className="flex items-center justify-between gap-4">
-          <a href="/" className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 transition hover:text-[#8a561f]">
-            <ArrowLeft className="h-4 w-4" /> Back to Fields Family Vault
-          </a>
-          <button onClick={handleSignOut} className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-[#8a561f]">
-            <LogOut className="h-4 w-4" /> Sign out
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+  <a href="/" className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 transition hover:text-[#8a561f]">
+    <ArrowLeft className="h-4 w-4" /> Back to Fields Family Vault
+  </a>
+
+  <div className="flex items-center gap-3">
+    <a
+      href="/project-tools"
+      className="inline-flex items-center gap-2 text-sm font-semibold text-[#8a561f] transition hover:text-[#65431f]"
+    >
+      <Wrench className="h-4 w-4" /> Project Tools
+    </a>
+
+    <button onClick={handleSignOut} className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-[#8a561f]">
+      <LogOut className="h-4 w-4" /> Sign out
+    </button>
+  </div>
+</div>
 
         <header className="mt-6 border-b border-stone-300 pb-7">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#a66b27]">Add to the collection</p>
