@@ -28,6 +28,15 @@ type QuestionCard = {
   status: QuestionStatus;
   notes: string | null;
   question_card_recordings: { audio_track_id: string }[];
+  question_card_progress: PersonProgress[];
+};
+
+type VaultPerson = 'Papa' | 'Dad' | 'Mom';
+
+type PersonProgress = {
+  vault_person: VaultPerson;
+  status: QuestionStatus;
+  notes: string | null;
 };
 
 type Track = {
@@ -46,8 +55,24 @@ const statusOptions: { value: QuestionStatus; label: string }[] = [
   { value: 'finished', label: 'Finished' },
 ];
 
+const vaultPeople: { value: VaultPerson; label: string }[] = [
+  { value: 'Papa', label: 'Papa' },
+  { value: 'Dad', label: 'Dad' },
+  { value: 'Mom', label: 'Mom / Ivy' },
+];
+
+const initialPersonStatuses: Record<VaultPerson, QuestionStatus> = {
+  Papa: 'not_started',
+  Dad: 'not_started',
+  Mom: 'not_started',
+};
+
 function statusLabel(status: QuestionStatus) {
   return statusOptions.find((option) => option.value === status)?.label || 'Not started';
+}
+
+function progressFor(card: QuestionCard, person: VaultPerson) {
+  return card.question_card_progress.find((progress) => progress.vault_person === person)?.status || 'not_started';
 }
 
 export default function QuestionTrackerPage() {
@@ -62,12 +87,12 @@ export default function QuestionTrackerPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [cardNumber, setCardNumber] = useState('');
   const [questionText, setQuestionText] = useState('');
-  const [status, setStatus] = useState<QuestionStatus>('not_started');
+  const [personStatuses, setPersonStatuses] = useState<Record<VaultPerson, QuestionStatus>>(initialPersonStatuses);
   const [notes, setNotes] = useState('');
   const [linkedTrackIds, setLinkedTrackIds] = useState<string[]>([]);
 
   const visibleCards = useMemo(
-    () => cards.filter((card) => filter === 'all' || card.status === filter),
+    () => cards.filter((card) => filter === 'all' || card.question_card_progress.some((progress) => progress.status === filter)),
     [cards, filter]
   );
 
@@ -98,7 +123,7 @@ export default function QuestionTrackerPage() {
     const [cardsResult, tracksResult] = await Promise.all([
       supabase
         .from('question_cards')
-        .select('id, card_number, question_text, status, notes, question_card_recordings(audio_track_id)')
+        .select('id, card_number, question_text, status, notes, question_card_recordings(audio_track_id), question_card_progress(vault_person, status, notes)')
         .order('card_number', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: true }),
       supabase
@@ -119,7 +144,7 @@ export default function QuestionTrackerPage() {
     setEditingId(null);
     setCardNumber('');
     setQuestionText('');
-    setStatus('not_started');
+    setPersonStatuses(initialPersonStatuses);
     setNotes('');
     setLinkedTrackIds([]);
   }
@@ -128,7 +153,11 @@ export default function QuestionTrackerPage() {
     setEditingId(card.id);
     setCardNumber(card.card_number?.toString() || '');
     setQuestionText(card.question_text);
-    setStatus(card.status);
+    setPersonStatuses({
+      Papa: progressFor(card, 'Papa'),
+      Dad: progressFor(card, 'Dad'),
+      Mom: progressFor(card, 'Mom'),
+    });
     setNotes(card.notes || '');
     setLinkedTrackIds(card.question_card_recordings.map((link) => link.audio_track_id));
     setMessage(null);
@@ -152,7 +181,9 @@ export default function QuestionTrackerPage() {
     const payload = {
       card_number: parsedNumber,
       question_text: questionText.trim(),
-      status,
+      // Keep the original field in sync for older project data. The three
+      // per-person fields below are now the tracker’s actual statuses.
+      status: personStatuses.Dad,
       notes: notes.trim() || null,
     };
     const cardResult = editingId
@@ -166,6 +197,19 @@ export default function QuestionTrackerPage() {
     }
 
     const questionId = cardResult.data.id;
+    const progressResult = await supabase.from('question_card_progress').upsert(
+      vaultPeople.map((person) => ({
+        question_card_id: questionId,
+        vault_person: person.value,
+        status: personStatuses[person.value],
+      })),
+      { onConflict: 'question_card_id,vault_person' }
+    );
+    if (progressResult.error) {
+      setSaving(false);
+      setMessage({ type: 'error', text: progressResult.error.message });
+      return;
+    }
     const removeResult = await supabase
       .from('question_card_recordings')
       .delete()
@@ -199,11 +243,12 @@ export default function QuestionTrackerPage() {
     <header className="mt-6 border-b border-stone-300 pb-7"><p className="text-xs font-semibold uppercase tracking-[.22em] text-[#a66b27]">Fields Family Vault</p><h1 className="mt-2 flex items-center gap-3 font-serif text-4xl text-stone-900 md:text-5xl"><ClipboardList className="h-9 w-9 text-[#a66b27]" />Question Tracker</h1><p className="mt-3 max-w-2xl text-stone-600">Add cards as you find them. A question can be linked to more than one recording, and none of this changes the original audio.</p></header>
     <section className="mt-8 rounded-3xl border border-[#ddc79f] bg-[#fbf3e3] p-6 shadow-sm md:p-8"><h2 className="font-serif text-2xl text-stone-900">{editingId ? 'Edit question' : 'Add a question'}</h2><form onSubmit={saveCard} className="mt-5 space-y-5">
       {message && <div className={`flex gap-2 rounded-xl border p-3 text-sm ${message.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>{message.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}{message.text}</div>}
-      <div className="grid gap-5 md:grid-cols-[150px_1fr_190px]"><div><label className="mb-1.5 block text-sm font-semibold">Card number</label><input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} inputMode="numeric" placeholder="Optional" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]" /></div><div><label className="mb-1.5 block text-sm font-semibold">Question *</label><input required value={questionText} onChange={(e) => setQuestionText(e.target.value)} placeholder="Type the question from the card" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]" /></div><div><label className="mb-1.5 block text-sm font-semibold">Status</label><select value={status} onChange={(e) => setStatus(e.target.value as QuestionStatus)} className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]">{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div></div>
+      <div className="grid gap-5 md:grid-cols-[150px_1fr]"><div><label className="mb-1.5 block text-sm font-semibold">Card number</label><input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} inputMode="numeric" placeholder="Optional" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]" /></div><div><label className="mb-1.5 block text-sm font-semibold">Question *</label><input required value={questionText} onChange={(e) => setQuestionText(e.target.value)} placeholder="Type the question from the card" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]" /></div></div>
+      <div><p className="mb-1.5 text-sm font-semibold">Progress by person</p><p className="mb-3 text-sm text-stone-600">Each person has their own status for this same question.</p><div className="grid gap-3 md:grid-cols-3">{vaultPeople.map((person) => <label key={person.value} className="rounded-xl border border-stone-300 bg-white p-3"><span className="mb-2 block text-sm font-semibold text-stone-800">{person.label}</span><select value={personStatuses[person.value]} onChange={(e) => setPersonStatuses((current) => ({ ...current, [person.value]: e.target.value as QuestionStatus }))} className="w-full rounded-lg border border-stone-300 bg-[#fffaf0] px-3 py-2 text-sm outline-none focus:border-[#a66b27]">{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>)}</div></div>
       <div><label className="mb-1.5 block text-sm font-semibold">Notes</label><textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Example: Asked together with question #12 in the same recording." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]" /></div>
       <div><p className="text-sm font-semibold">Linked recording(s)</p><p className="mt-1 text-sm text-stone-600">Optional. Check every recording that answers this card.</p><div className="mt-3 max-h-52 space-y-2 overflow-y-auto rounded-xl border border-stone-300 bg-white p-3">{tracks.length ? tracks.map((track) => <label key={track.id} className="flex cursor-pointer items-start gap-3 rounded-lg p-2 hover:bg-stone-50"><input type="checkbox" checked={linkedTrackIds.includes(track.id)} onChange={(e) => setLinkedTrackIds((ids) => e.target.checked ? [...ids, track.id] : ids.filter((id) => id !== track.id))} className="mt-1 h-4 w-4 accent-[#80542a]" /><span className="text-sm"><span className="font-semibold text-stone-800">{track.title}</span><span className="ml-2 text-stone-500">{track.vault_person || 'Dad'} · {new Date(track.created_at).toLocaleDateString()}</span></span></label>) : <p className="p-2 text-sm text-stone-500">No recordings have been added yet.</p>}</div></div>
       <div className="flex flex-wrap gap-3"><button disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white hover:bg-[#293127] disabled:bg-stone-400">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editingId ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}{saving ? 'Saving…' : editingId ? 'Save changes' : 'Add question'}</button>{editingId && <button type="button" onClick={resetEditor} className="rounded-xl border border-stone-300 bg-white px-4 py-3 font-semibold text-stone-700">Cancel</button>}</div>
     </form></section>
-    <section className="mt-8"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#a66b27]">Your cards</p><h2 className="mt-2 font-serif text-3xl text-stone-900">{cards.length} {cards.length === 1 ? 'question' : 'questions'} tracked</h2></div><select value={filter} onChange={(e) => setFilter(e.target.value as 'all' | QuestionStatus)} className="rounded-xl border border-stone-300 bg-white px-4 py-3 text-sm"><option value="all">All statuses</option>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div><div className="mt-5 space-y-3">{visibleCards.map((card) => <article key={card.id} className="rounded-2xl border border-stone-300 bg-[#fffaf0] p-5 shadow-sm"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">{card.card_number ? `Card ${card.card_number}` : 'Unnumbered card'} · {statusLabel(card.status)}</p><h3 className="mt-2 font-serif text-xl text-stone-900">{card.question_text}</h3>{card.notes && <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-stone-600">{card.notes}</p>}{card.question_card_recordings.length > 0 && <p className="mt-3 text-sm font-medium text-stone-700">{card.question_card_recordings.length} linked {card.question_card_recordings.length === 1 ? 'recording' : 'recordings'}</p>}</div><button type="button" onClick={() => editCard(card)} className="w-fit rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:border-[#a66b27]">Edit</button></div></article>)}{!visibleCards.length && <p className="rounded-2xl border border-dashed border-stone-300 bg-[#fffaf0] p-8 text-center text-stone-600">No questions are in this view yet. Add the first card above whenever you are ready.</p>}</div></section>
+    <section className="mt-8"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.18em] text-[#a66b27]">Your cards</p><h2 className="mt-2 font-serif text-3xl text-stone-900">{cards.length} {cards.length === 1 ? 'question' : 'questions'} tracked</h2></div><select value={filter} onChange={(e) => setFilter(e.target.value as 'all' | QuestionStatus)} className="rounded-xl border border-stone-300 bg-white px-4 py-3 text-sm"><option value="all">Any progress status</option>{statusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div><div className="mt-5 space-y-3">{visibleCards.map((card) => <article key={card.id} className="rounded-2xl border border-stone-300 bg-[#fffaf0] p-5 shadow-sm"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">{card.card_number ? `Card ${card.card_number}` : 'Unnumbered card'}</p><h3 className="mt-2 font-serif text-xl text-stone-900">{card.question_text}</h3><div className="mt-4 grid gap-2 sm:grid-cols-3">{vaultPeople.map((person) => <div key={person.value} className="rounded-xl border border-stone-200 bg-white px-3 py-2"><p className="text-xs font-semibold uppercase tracking-[.12em] text-stone-500">{person.label}</p><p className="mt-1 text-sm font-semibold text-stone-800">{statusLabel(progressFor(card, person.value))}</p></div>)}</div>{card.notes && <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-stone-600">{card.notes}</p>}{card.question_card_recordings.length > 0 && <p className="mt-3 text-sm font-medium text-stone-700">{card.question_card_recordings.length} linked {card.question_card_recordings.length === 1 ? 'recording' : 'recordings'}</p>}</div><button type="button" onClick={() => editCard(card)} className="w-fit rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:border-[#a66b27]">Edit</button></div></article>)}{!visibleCards.length && <p className="rounded-2xl border border-dashed border-stone-300 bg-[#fffaf0] p-8 text-center text-stone-600">No questions are in this view yet. Add the first card above whenever you are ready.</p>}</div></section>
   </div></main>;
 }
