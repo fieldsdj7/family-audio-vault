@@ -7,6 +7,7 @@ type Track = {
   id: string;
   storage_path: string | null;
   audio_url: string | null;
+  trashed_at: string | null;
 };
 
 function getStoragePath(track: Track) {
@@ -57,18 +58,60 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = (await request.json()) as { trackId?: string };
+  const body = (await request.json()) as {
+    trackId?: string;
+    action?: 'trash' | 'restore' | 'permanent';
+  };
   if (!body.trackId) {
     return NextResponse.json({ error: 'A recording was not specified.' }, { status: 400 });
+  }
+  const action = body.action || 'trash';
+  if (!['trash', 'restore', 'permanent'].includes(action)) {
+    return NextResponse.json({ error: 'That action is not available.' }, { status: 400 });
   }
 
   const { data: track, error: trackError } = await supabase
     .from('audio_tracks')
-    .select('id, storage_path, audio_url')
+    .select('id, storage_path, audio_url, trashed_at')
     .eq('id', body.trackId)
     .single<Track>();
   if (trackError || !track) {
     return NextResponse.json({ error: 'That recording could not be found.' }, { status: 404 });
+  }
+
+  if (action === 'trash') {
+    if (track.trashed_at) {
+      return NextResponse.json({ error: 'This recording is already in Trash.' }, { status: 409 });
+    }
+    const { error: trashError } = await supabase
+      .from('audio_tracks')
+      .update({ trashed_at: new Date().toISOString(), trashed_by: user.id })
+      .eq('id', track.id);
+    if (trashError) {
+      return NextResponse.json({ error: trashError.message }, { status: 500 });
+    }
+    return NextResponse.json({ trashed: true });
+  }
+
+  if (action === 'restore') {
+    if (!track.trashed_at) {
+      return NextResponse.json({ error: 'This recording is not in Trash.' }, { status: 409 });
+    }
+    const { error: restoreError } = await supabase
+      .from('audio_tracks')
+      .update({ trashed_at: null, trashed_by: null })
+      .eq('id', track.id);
+    if (restoreError) {
+      return NextResponse.json({ error: restoreError.message }, { status: 500 });
+    }
+    return NextResponse.json({ restored: true });
+  }
+
+  if (!track.trashed_at) {
+    return NextResponse.json(
+      { error: 'Move this recording to Trash before permanently removing it.' },
+      { status: 409 }
+    );
   }
 
   const storagePath = getStoragePath(track);
@@ -78,7 +121,7 @@ export async function POST(request: NextRequest) {
       .remove([storagePath]);
     if (storageError) {
       return NextResponse.json(
-        { error: `The audio file could not be deleted: ${storageError.message}` },
+        { error: `The audio file could not be permanently removed: ${storageError.message}` },
         { status: 500 }
       );
     }
@@ -90,10 +133,10 @@ export async function POST(request: NextRequest) {
     .eq('id', track.id);
   if (deleteError) {
     return NextResponse.json(
-      { error: 'The audio file was deleted, but its vault entry could not be removed. Please refresh the page.' },
+      { error: 'The audio file was removed, but its vault entry could not be removed. Please refresh the page.' },
       { status: 500 }
     );
   }
 
-  return NextResponse.json({ deleted: true });
+  return NextResponse.json({ permanentlyDeleted: true });
 }
