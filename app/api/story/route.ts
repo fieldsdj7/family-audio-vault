@@ -50,8 +50,20 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   if (!admin) return NextResponse.json({ error: 'Only the vault administrator can create family stories.' }, { status: 403 });
 
-  const body = (await request.json()) as { trackId?: string };
+  const body = (await request.json()) as {
+    trackId?: string;
+    mode?: 'create' | 'improve';
+    currentTitle?: string;
+    currentStory?: string;
+  };
   if (!body.trackId) return NextResponse.json({ error: 'A recording was not specified.' }, { status: 400 });
+
+  const mode = body.mode === 'improve' ? 'improve' : 'create';
+  const currentTitle = body.currentTitle?.trim() || '';
+  const currentStory = body.currentStory?.trim() || '';
+  if (mode === 'improve' && !currentStory) {
+    return NextResponse.json({ error: 'There is no current story to improve.' }, { status: 400 });
+  }
 
   const { data: track, error: trackError } = await supabase
     .from('audio_tracks')
@@ -67,17 +79,31 @@ export async function POST(request: NextRequest) {
     .eq('id', track.id);
 
   try {
-    const instructions = [
-      'You turn a spoken family-memory transcript into a careful, readable first-person life-story passage.',
-      'Use only facts stated in the transcript. Do not add names, dates, motives, dialogue, emotions, or events that were not said.',
-      'Keep the speaker\'s point of view and meaning. Remove only obvious false starts, repeated fragments, and filler words.',
-      'Do not hide uncertainty: retain bracketed unclear words exactly as written.',
-      'Write 2 to 6 short, warm book-ready paragraphs. Do not include a heading in the story text.',
-      'Return valid JSON only, with exactly two string fields: title and story.',
-      'The title should be specific, warm, and 3 to 8 words long—not generic and not made-up.',
-    ].join(' ');
+    const instructions = mode === 'improve'
+      ? [
+          'You carefully improve an existing first-person family-memory story.',
+          'Preserve the current story\'s voice, facts, point of view, organization, and wording wherever possible; do not rewrite it from scratch.',
+          'Improve only clarity, grammar, flow, awkward wording, and unnecessary repetition.',
+          'The reviewed transcript is the factual authority. Correct a detail only when the transcript clearly supports the correction.',
+          'Do not add names, dates, motives, dialogue, emotions, descriptions, or events that are not in the transcript.',
+          'Do not hide uncertainty: retain bracketed unclear words exactly as written.',
+          'Keep the existing title unless a small improvement is clearly helpful.',
+          'Return valid JSON only, with exactly two string fields: title and story. Do not include a heading in the story text.',
+        ].join(' ')
+      : [
+          'You turn a spoken family-memory transcript into a careful, readable first-person life-story passage.',
+          'Use only facts stated in the transcript. Do not add names, dates, motives, dialogue, emotions, or events that were not said.',
+          'Keep the speaker\'s point of view and meaning. Remove only obvious false starts, repeated fragments, and filler words.',
+          'Do not hide uncertainty: retain bracketed unclear words exactly as written.',
+          'Write 2 to 6 short, warm book-ready paragraphs. Do not include a heading in the story text.',
+          'Return valid JSON only, with exactly two string fields: title and story.',
+          'The title should be specific, warm, and 3 to 8 words longâ€”not generic and not made-up.',
+        ].join(' ');
 
-    const prompt = `Recording title: ${track.title}\nSpeaker: ${track.speaker}\nLegacy book: ${track.vault_person || 'Dad'}\nCategory: ${track.category || 'General'}\n\nTranscript:\n${track.transcript}`;
+    const recordingDetails = `Recording title: ${track.title}\nSpeaker: ${track.speaker}\nLegacy book: ${track.vault_person || 'Dad'}\nCategory: ${track.category || 'General'}`;
+    const prompt = mode === 'improve'
+      ? `${recordingDetails}\n\nCurrent story title:\n${currentTitle || track.title}\n\nCurrent story to improve:\n${currentStory}\n\nReviewed transcript (factual source):\n${track.transcript}`
+      : `${recordingDetails}\n\nReviewed transcript:\n${track.transcript}`;
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
