@@ -78,6 +78,7 @@ export default function AdminUpload() {
   const [storyDraft, setStoryDraft] = useState('');
   const [savingEditor, setSavingEditor] = useState(false);
   const [reTranscribing, setReTranscribing] = useState(false);
+  const [labelingSpeakers, setLabelingSpeakers] = useState(false);
   const [creatingStory, setCreatingStory] = useState(false);
   const [editorMessage, setEditorMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 const [backingUp, setBackingUp] = useState(false);
@@ -236,26 +237,74 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
         body: JSON.stringify({ trackId: selectedTrack.id }),
-        signal: AbortSignal.timeout(285_000),
+        signal: AbortSignal.timeout(55_000),
       });
 
-      const result = await response.json().catch(() => null) as { error?: string } | null;
+      const result = await response.json().catch(() => null) as {
+        error?: string;
+        transcript?: string;
+      } | null;
       if (!response.ok) {
         throw new Error(result?.error || 'The transcription service timed out. Please try again.');
       }
 
-      setEditorMessage({ type: 'success', text: 'A fresh word-for-word transcript was created. Review it, then save if you make edits.' });
+      const labeled = await requestSpeakerLabels(session?.access_token || '', result?.transcript || '');
+      setEditorMessage({
+        type: 'success',
+        text: `A fresh word-for-word transcript was created and separated into ${labeled.speakerCount} speakers. Review it, then save if you make edits.`,
+      });
       await fetchTracks(selectedTrack.id);
     } catch (error) {
       const text =
         error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
-          ? 'The transcription took longer than five minutes. Please try again.'
+          ? 'The transcription took too long. Please try again.'
           : error instanceof Error
             ? error.message
             : 'The transcript could not be created.';
       setEditorMessage({ type: 'error', text });
     } finally {
       setReTranscribing(false);
+    }
+  }
+
+  async function requestSpeakerLabels(accessToken: string, transcript: string) {
+    const response = await fetch('/api/label-speakers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ trackId: selectedTrack?.id, transcript }),
+      signal: AbortSignal.timeout(55_000),
+    });
+    const result = await response.json().catch(() => null) as {
+      error?: string;
+      transcript?: string;
+      speakerCount?: number;
+    } | null;
+    if (!response.ok || !result?.transcript) {
+      throw new Error(result?.error || 'The speaker-label service timed out. Please try again.');
+    }
+    return { transcript: result.transcript, speakerCount: result.speakerCount || 2 };
+  }
+
+  async function labelExistingTranscript() {
+    if (!selectedTrack || !transcriptDraft.trim()) return;
+    setLabelingSpeakers(true);
+    setEditorMessage(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const result = await requestSpeakerLabels(session?.access_token || '', transcriptDraft);
+      setTranscriptDraft(result.transcript);
+      setEditorMessage({
+        type: 'success',
+        text: `The existing transcript was separated into ${result.speakerCount} speakers without changing its words.`,
+      });
+      await fetchTracks(selectedTrack.id);
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'The speakers could not be labeled.',
+      });
+    } finally {
+      setLabelingSpeakers(false);
     }
   }
 
@@ -541,6 +590,20 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
         return;
       }
 
+      const freshTranscript = (transcriptionResult as { transcript?: string }).transcript || '';
+      try {
+        await fetch('/api/label-speakers', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token || ''}`,
+          },
+          body: JSON.stringify({ trackId: savedTrack.id, transcript: freshTranscript }),
+        });
+      } catch {
+        // The word-for-word transcript is still saved if optional speaker labeling fails.
+      }
+
       setMessage({ type: 'success', text: `Saved to ${vaultPerson}'s vault and transcribed.` });
       setTitle('');
       setSpeaker('');
@@ -747,7 +810,7 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
             {selectedTrack && <>
               <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600"><span className="font-semibold text-stone-800">{selectedTrack.speaker}</span> · {selectedTrack.category || 'General'} · Transcript status: <span className="font-medium">{selectedTrack.transcription_status || 'not started'}</span></div>
 
-              <div><div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label className="text-sm font-semibold">Word-for-word transcript</label><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void copyTranscript()} disabled={!transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"><Copy className="h-4 w-4" />Copy</button><button type="button" onClick={() => void reTranscribe()} disabled={reTranscribing || creatingStory} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{reTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{reTranscribing ? 'Re-transcribing…' : 'Re-transcribe'}</button></div></div><textarea rows={12} value={transcriptDraft} onChange={(e) => setTranscriptDraft(e.target.value)} placeholder="The transcript will appear here after transcription finishes." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div>
+              <div><div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label className="text-sm font-semibold">Word-for-word transcript</label><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void copyTranscript()} disabled={!transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"><Copy className="h-4 w-4" />Copy</button><button type="button" onClick={() => void labelExistingTranscript()} disabled={labelingSpeakers || reTranscribing || creatingStory || !transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{labelingSpeakers ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}{labelingSpeakers ? 'Labeling…' : 'Label speakers'}</button><button type="button" onClick={() => void reTranscribe()} disabled={reTranscribing || labelingSpeakers || creatingStory} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{reTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{reTranscribing ? 'Re-transcribing…' : 'Re-transcribe'}</button></div></div><textarea rows={12} value={transcriptDraft} onChange={(e) => setTranscriptDraft(e.target.value)} placeholder="The transcript will appear here after transcription finishes." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div>
 
               <div className="border-t border-stone-200 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">Family Story</p><p className="mt-1 text-sm text-stone-600">AI uses only the reviewed transcript to make a first-person, book-ready story. It does not invent facts.</p></div><button type="button" onClick={() => void createStory()} disabled={creatingStory || reTranscribing || !transcriptDraft.trim()} className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#80542a] px-4 py-3 text-sm font-semibold text-white hover:bg-[#65431f] disabled:cursor-not-allowed disabled:bg-stone-400">{creatingStory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{creatingStory ? 'Creating story…' : storyDraft ? 'Create a new story' : 'Create Story'}</button></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Story title</label><input value={storyTitleDraft} onChange={(e) => setStoryTitleDraft(e.target.value)} placeholder="AI will suggest a title" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Book-style story</label><textarea rows={12} value={storyDraft} onChange={(e) => setStoryDraft(e.target.value)} placeholder="Create Story will put a readable, reviewable story here." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 font-serif leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div></div>
 
