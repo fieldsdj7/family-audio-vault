@@ -9,8 +9,47 @@ type Track = {
   storage_path: string | null;
 };
 
+type DiarizedSegment = {
+  text?: string;
+  speaker?: string;
+};
+
+type DiarizedTranscription = {
+  text?: string;
+  segments?: DiarizedSegment[];
+  error?: { message?: string };
+};
+
 function fileNameFromPath(path: string) {
   return path.split('/').pop() || 'recording.mp3';
+}
+
+function formatSpeakerTranscript(response: DiarizedTranscription) {
+  const segments = (response.segments || []).filter(
+    (segment): segment is DiarizedSegment & { text: string; speaker: string } =>
+      Boolean(segment.text?.trim() && segment.speaker)
+  );
+
+  const speakers = [...new Set(segments.map((segment) => segment.speaker))];
+  if (speakers.length <= 1) return response.text?.trim() || segments.map((segment) => segment.text.trim()).join(' ');
+
+  const speakerNumbers = new Map(speakers.map((speaker, index) => [speaker, index + 1]));
+  const turns: Array<{ speaker: string; text: string }> = [];
+
+  for (const segment of segments) {
+    const text = segment.text.trim();
+    const previousTurn = turns.at(-1);
+
+    if (previousTurn?.speaker === segment.speaker) {
+      previousTurn.text = `${previousTurn.text} ${text}`;
+    } else {
+      turns.push({ speaker: segment.speaker, text });
+    }
+  }
+
+  return turns
+    .map((turn) => `Speaker ${speakerNumbers.get(turn.speaker)}: ${turn.text}`)
+    .join('\n\n');
 }
 
 export async function POST(request: NextRequest) {
@@ -90,7 +129,9 @@ export async function POST(request: NextRequest) {
     }
 
     const form = new FormData();
-    form.append('model', 'gpt-transcribe');
+    form.append('model', 'gpt-4o-transcribe-diarize');
+    form.append('response_format', 'diarized_json');
+    form.append('chunking_strategy', 'auto');
     form.append('file', audio, fileNameFromPath(track.storage_path));
 
     const openAiResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -99,15 +140,17 @@ export async function POST(request: NextRequest) {
       body: form,
     });
 
-    const responseBody = await openAiResponse.json() as { text?: string; error?: { message?: string } };
+    const responseBody = await openAiResponse.json() as DiarizedTranscription;
     if (!openAiResponse.ok || !responseBody.text) {
       throw new Error(responseBody.error?.message || 'OpenAI could not transcribe this recording.');
     }
 
+    const transcript = formatSpeakerTranscript(responseBody);
+
     const { error: updateError } = await supabase
       .from('audio_tracks')
       .update({
-        transcript: responseBody.text,
+        transcript,
         transcription_status: 'complete',
         transcription_error: null,
       })
@@ -115,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     if (updateError) throw updateError;
 
-    return NextResponse.json({ transcript: responseBody.text });
+    return NextResponse.json({ transcript });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Transcription failed.';
     await supabase
