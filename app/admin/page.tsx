@@ -230,20 +230,33 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
     if (!selectedTrack) return;
     setReTranscribing(true);
     setEditorMessage(null);
-    const { data: { session } } = await supabase.auth.getSession();
-    const response = await fetch('/api/transcribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-      body: JSON.stringify({ trackId: selectedTrack.id }),
-    });
-    const result = (await response.json()) as { error?: string };
-    setReTranscribing(false);
-    if (!response.ok) {
-      setEditorMessage({ type: 'error', text: result.error || 'The transcript could not be created.' });
-      return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
+        body: JSON.stringify({ trackId: selectedTrack.id }),
+        signal: AbortSignal.timeout(285_000),
+      });
+
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(result?.error || 'The transcription service timed out. Please try again.');
+      }
+
+      setEditorMessage({ type: 'success', text: 'A fresh word-for-word transcript was created. Review it, then save if you make edits.' });
+      await fetchTracks(selectedTrack.id);
+    } catch (error) {
+      const text =
+        error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+          ? 'The transcription took longer than five minutes. Please try again.'
+          : error instanceof Error
+            ? error.message
+            : 'The transcript could not be created.';
+      setEditorMessage({ type: 'error', text });
+    } finally {
+      setReTranscribing(false);
     }
-    setEditorMessage({ type: 'success', text: 'A fresh word-for-word transcript was created. Review it, then save if you make edits.' });
-    await fetchTracks(selectedTrack.id);
   }
 
   async function createStory() {
