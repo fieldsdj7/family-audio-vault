@@ -92,6 +92,7 @@ export default function AdminUpload() {
   const [reTranscribing, setReTranscribing] = useState(false);
   const [labelingSpeakers, setLabelingSpeakers] = useState(false);
   const [creatingStory, setCreatingStory] = useState(false);
+  const [storyAction, setStoryAction] = useState<'create' | 'improve'>('create');
   const [editorMessage, setEditorMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [editorAudioUrl, setEditorAudioUrl] = useState('');
   const [editorAudioLoading, setEditorAudioLoading] = useState(false);
@@ -403,11 +404,16 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
     }
   }
 
-  async function createStory() {
+  async function createStory(mode: 'create' | 'improve' = 'create') {
     if (!selectedTrack || !transcriptDraft.trim()) {
       setEditorMessage({ type: 'error', text: 'This recording needs a transcript before a story can be created.' });
       return;
     }
+    if (mode === 'improve' && !storyDraft.trim()) {
+      setEditorMessage({ type: 'error', text: 'There is no current story to improve yet.' });
+      return;
+    }
+    setStoryAction(mode);
     setCreatingStory(true);
     setEditorMessage(null);
     const { error: saveTranscriptError } = await supabase
@@ -423,7 +429,12 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
     const response = await fetch('/api/story', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}` },
-      body: JSON.stringify({ trackId: selectedTrack.id }),
+      body: JSON.stringify({
+        trackId: selectedTrack.id,
+        mode,
+        currentTitle: storyTitleDraft,
+        currentStory: storyDraft,
+      }),
     });
     const result = (await response.json()) as { error?: string };
     setCreatingStory(false);
@@ -431,7 +442,12 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
       setEditorMessage({ type: 'error', text: result.error || 'The family story could not be created.' });
       return;
     }
-    setEditorMessage({ type: 'success', text: 'The AI story and title are ready. Read it over and make any changes you want before saving.' });
+    setEditorMessage({
+      type: 'success',
+      text: mode === 'improve'
+        ? 'The current story was improved without starting over. Read it over and save any final changes.'
+        : 'The AI story and title are ready. Read it over and make any changes you want before saving.',
+    });
     await fetchTracks(selectedTrack.id);
   }
 
@@ -943,7 +959,7 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
 
               <div><div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label className="text-sm font-semibold">Word-for-word transcript</label><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void copyTranscript()} disabled={!transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"><Copy className="h-4 w-4" />Copy</button><button type="button" onClick={() => void labelExistingTranscript()} disabled={labelingSpeakers || reTranscribing || creatingStory || !transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{labelingSpeakers ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}{labelingSpeakers ? 'Labeling…' : 'Label speakers'}</button><button type="button" onClick={() => void reTranscribe()} disabled={reTranscribing || labelingSpeakers || creatingStory} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{reTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{reTranscribing ? 'Re-transcribing…' : 'Re-transcribe'}</button></div></div><textarea rows={12} value={transcriptDraft} onChange={(e) => setTranscriptDraft(e.target.value)} placeholder="The transcript will appear here after transcription finishes." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div>
 
-              <div className="border-t border-stone-200 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-semibold">Family Story</p><p className="mt-1 text-sm text-stone-600">AI uses only the reviewed transcript to make a first-person, book-ready story. It does not invent facts.</p></div><button type="button" onClick={() => void createStory()} disabled={creatingStory || reTranscribing || !transcriptDraft.trim()} className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#80542a] px-4 py-3 text-sm font-semibold text-white hover:bg-[#65431f] disabled:cursor-not-allowed disabled:bg-stone-400">{creatingStory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{creatingStory ? 'Creating story…' : storyDraft ? 'Create a new story' : 'Create Story'}</button></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Story title</label><input value={storyTitleDraft} onChange={(e) => setStoryTitleDraft(e.target.value)} placeholder="AI will suggest a title" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Book-style story</label><textarea rows={12} value={storyDraft} onChange={(e) => setStoryDraft(e.target.value)} placeholder="Create Story will put a readable, reviewable story here." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 font-serif leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div></div>
+              <div className="border-t border-stone-200 pt-6"><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-semibold">Family Story</p><p className="mt-1 max-w-xl text-sm text-stone-600">Create a fresh story from the reviewed transcript, or improve the story already here without starting over. You can also edit the title and story yourself; saving manual changes does not use AI.</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void createStory('create')} disabled={creatingStory || reTranscribing || !transcriptDraft.trim()} className="inline-flex w-fit items-center gap-2 rounded-xl bg-[#80542a] px-4 py-3 text-sm font-semibold text-white hover:bg-[#65431f] disabled:cursor-not-allowed disabled:bg-stone-400">{creatingStory && storyAction === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}{creatingStory && storyAction === 'create' ? 'Creating story…' : storyDraft ? 'Create a New Story' : 'Create Story with AI'}</button><button type="button" onClick={() => void createStory('improve')} disabled={creatingStory || reTranscribing || !transcriptDraft.trim() || !storyDraft.trim()} className="inline-flex w-fit items-center gap-2 rounded-xl border border-[#80542a] bg-white px-4 py-3 text-sm font-semibold text-[#65431f] hover:bg-[#f4ead8] disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400">{creatingStory && storyAction === 'improve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}{creatingStory && storyAction === 'improve' ? 'Improving story…' : 'Improve Current Story'}</button></div></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Story title <span className="font-normal text-stone-500">(you can edit this)</span></label><input value={storyTitleDraft} onChange={(e) => setStoryTitleDraft(e.target.value)} placeholder="AI will suggest a title" className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div><div className="mt-5"><label className="mb-1.5 block text-sm font-semibold">Book-style story <span className="font-normal text-stone-500">(you can edit this)</span></label><textarea rows={12} value={storyDraft} onChange={(e) => setStoryDraft(e.target.value)} placeholder="Create Story with AI will put a readable story here. You can then correct or rewrite any part of it yourself." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 font-serif leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div></div>
 
               <button type="button" onClick={() => void saveEditor()} disabled={savingEditor || creatingStory || reTranscribing} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white hover:bg-[#293127] disabled:cursor-not-allowed disabled:bg-stone-400">{savingEditor ? <Loader2 className="h-5 w-5 animate-spin" /> : <Save className="h-5 w-5" />}{savingEditor ? 'Saving changes…' : 'Save transcript and story changes'}</button>
             </>}
