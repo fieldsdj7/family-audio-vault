@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   ArrowLeft,
@@ -140,6 +141,9 @@ export default function SplitRecordingPage() {
     setMessage(null);
     const track = tracks.find((item) => item.id === nextId);
     if (!track) return;
+    // Keep the existing words available. The administrator trims this copy
+    // down to only the selected answer before saving the split entry.
+    setTranscript(track.transcript || "");
     const storagePath = getStoragePath(track);
     if (!storagePath) {
       setMessage({
@@ -187,6 +191,13 @@ export default function SplitRecordingPage() {
       setMessage({
         type: "error",
         text: "Enter a valid start and end time. The end must be after the start.",
+      });
+      return;
+    }
+    if (duration > 0 && end > Math.ceil(duration)) {
+      setMessage({
+        type: "error",
+        text: "The end time cannot be after the end of the recording.",
       });
       return;
     }
@@ -243,22 +254,44 @@ export default function SplitRecordingPage() {
           )
         : Promise.resolve({ error: null }),
     ]);
-    setSaving(false);
     if (masterResult.error || linksResult.error) {
+      setSaving(false);
       setMessage({
         type: "error",
         text: `The answer was created, but ${masterResult.error?.message || linksResult.error?.message}. Please do not create it again; refresh and check the collection first.`,
       });
       return;
     }
+
+    let storyCreated = false;
+    if (transcript.trim()) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const storyResponse = await fetch("/api/story", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token || ""}`,
+        },
+        body: JSON.stringify({ trackId: answer.id }),
+      });
+      storyCreated = storyResponse.ok;
+    }
+
+    setSaving(false);
     setMessage({
       type: "success",
-      text: "Answer entry created. The original recording is still untouched and remains available here as the master.",
+      text: transcript.trim()
+        ? storyCreated
+          ? "Answer entry, transcript, and family story created. The original recording remains untouched as the master."
+          : "Answer entry and transcript created. The story could not be created automatically, but you can create it in Story Studio."
+        : "Answer entry created. Add its transcript in Story Studio before creating the family story. The original remains untouched as the master.",
     });
     setStartSeconds("0");
     setEndSeconds("");
     setTitle("");
-    setTranscript("");
+    setTranscript(selectedSource.transcript || "");
     setNotes("");
     setQuestionIds([]);
   }
@@ -280,12 +313,12 @@ export default function SplitRecordingPage() {
           <p className="mt-3 text-sm leading-relaxed text-stone-600">
             Only vault administrators can create answer entries.
           </p>
-          <a
+          <Link
             href="/"
             className="mt-6 inline-flex rounded-xl bg-[#3b4536] px-4 py-3 font-semibold text-white hover:bg-[#293127]"
           >
             Return to the vault
-          </a>
+          </Link>
         </div>
       </main>
     );
@@ -468,6 +501,13 @@ export default function SplitRecordingPage() {
                 placeholder="Paste or type only the words spoken during this time range. You can add it later, too."
                 className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
               />
+              {selectedSource?.transcript && (
+                <p className="mt-2 text-xs leading-relaxed text-amber-800">
+                  The original full transcript was copied here so no words are
+                  lost. Before creating the entry, delete Questions 2–4 and
+                  leave only the words for this answer.
+                </p>
+              )}
             </div>
             <div className="mt-5">
               <label className="mb-1.5 block text-sm font-semibold">
