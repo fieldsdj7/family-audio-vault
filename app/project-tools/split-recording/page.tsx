@@ -527,7 +527,7 @@ export default function SplitRecordingPage() {
             </div>
           </section>
           <button
-            disabled={saving || !sourceId}
+            disabled={saving}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white hover:bg-[#293127] disabled:bg-stone-400"
           >
             {saving ? (
