@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import JSZip from 'jszip';
 import {
@@ -44,7 +44,19 @@ type AudioTrack = {
   transcription_status?: string | null;
   storage_path?: string | null;
   audio_url?: string | null;
+  source_track_id?: string | null;
+  clip_start_seconds?: number | null;
+  clip_end_seconds?: number | null;
 };
+
+function getStoragePath(track: AudioTrack) {
+  if (track.storage_path) return track.storage_path;
+
+  // Supports recordings uploaded before the private-storage change.
+  const marker = '/audio-files/';
+  const oldPath = track.audio_url?.split(marker)[1];
+  return oldPath || null;
+}
 
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
@@ -81,9 +93,19 @@ export default function AdminUpload() {
   const [labelingSpeakers, setLabelingSpeakers] = useState(false);
   const [creatingStory, setCreatingStory] = useState(false);
   const [editorMessage, setEditorMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [editorAudioUrl, setEditorAudioUrl] = useState('');
+  const [editorAudioLoading, setEditorAudioLoading] = useState(false);
+  const [editorAudioError, setEditorAudioError] = useState('');
+  const editorAudioRef = useRef<HTMLAudioElement | null>(null);
 const [backingUp, setBackingUp] = useState(false);
 const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const selectedTrack = tracks.find((track) => track.id === selectedTrackId) || null;
+  const editorClipStart = Math.max(0, selectedTrack?.clip_start_seconds || 0);
+  const editorClipEnd =
+    typeof selectedTrack?.clip_end_seconds === 'number' &&
+    selectedTrack.clip_end_seconds > editorClipStart
+      ? selectedTrack.clip_end_seconds
+      : null;
 
   useEffect(() => {
     async function checkAccess() {
@@ -123,6 +145,79 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
   useEffect(() => {
     if (isAdmin) void fetchTracks();
   }, [isAdmin]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEditorAudio() {
+      setEditorAudioUrl('');
+      setEditorAudioError('');
+
+      const track = tracks.find((item) => item.id === selectedTrackId);
+      if (!track) {
+        setEditorAudioLoading(false);
+        return;
+      }
+
+      setEditorAudioLoading(true);
+      const storagePath = getStoragePath(track);
+
+      if (storagePath) {
+        const { data, error } = await supabase.storage
+          .from('audio-files')
+          .createSignedUrl(storagePath, 60 * 60);
+
+        if (cancelled) return;
+        if (error || !data?.signedUrl) {
+          setEditorAudioError(error?.message || 'Could not open this recording.');
+        } else {
+          setEditorAudioUrl(data.signedUrl);
+        }
+      } else if (track.audio_url) {
+        if (!cancelled) setEditorAudioUrl(track.audio_url);
+      } else if (!cancelled) {
+        setEditorAudioError('No audio file is connected to this recording.');
+      }
+
+      if (!cancelled) setEditorAudioLoading(false);
+    }
+
+    void loadEditorAudio();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTrackId, tracks]);
+
+  function prepareEditorAudio() {
+    const audio = editorAudioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.min(editorClipStart, audio.duration || editorClipStart);
+  }
+
+  function keepEditorAudioInsideClip() {
+    const audio = editorAudioRef.current;
+    if (!audio) return;
+
+    if (audio.currentTime < editorClipStart) {
+      audio.currentTime = editorClipStart;
+    }
+
+    if (editorClipEnd && audio.currentTime >= editorClipEnd - 0.05) {
+      audio.pause();
+      audio.currentTime = editorClipStart;
+    }
+  }
+
+  function startEditorAudioInsideClip() {
+    const audio = editorAudioRef.current;
+    if (!audio) return;
+    if (
+      audio.currentTime < editorClipStart ||
+      (editorClipEnd && audio.currentTime >= editorClipEnd - 0.05)
+    ) {
+      audio.currentTime = editorClipStart;
+    }
+  }
 
   async function fetchTracks(preferredId?: string) {
     setLoadingTracks(true);
@@ -809,6 +904,42 @@ const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; 
 
             {selectedTrack && <>
               <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600"><span className="font-semibold text-stone-800">{selectedTrack.speaker}</span> · {selectedTrack.category || 'General'} · Transcript status: <span className="font-medium">{selectedTrack.transcription_status || 'not started'}</span></div>
+
+              <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Headphones className="h-4 w-4 text-[#a66b27]" />
+                  <p className="text-sm font-semibold text-stone-800">Listen while you correct the transcript</p>
+                </div>
+                {editorAudioLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-stone-600">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Opening recording…
+                  </div>
+                ) : editorAudioError ? (
+                  <div className="flex items-start gap-2 text-sm text-rose-700">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {editorAudioError}
+                  </div>
+                ) : editorAudioUrl ? (
+                  <>
+                    <audio
+                      ref={editorAudioRef}
+                      key={`${selectedTrack.id}-${editorAudioUrl}`}
+                      controls
+                      preload="metadata"
+                      src={editorAudioUrl}
+                      className="w-full"
+                      onLoadedMetadata={prepareEditorAudio}
+                      onPlay={startEditorAudioInsideClip}
+                      onSeeking={keepEditorAudioInsideClip}
+                      onTimeUpdate={keepEditorAudioInsideClip}
+                    />
+                    {selectedTrack.source_track_id && editorClipEnd && (
+                      <p className="mt-2 text-xs text-stone-500">
+                        This player will play only this answer&apos;s saved section of the original recording.
+                      </p>
+                    )}
+                  </>
+                ) : null}
+              </div>
 
               <div><div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><label className="text-sm font-semibold">Word-for-word transcript</label><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void copyTranscript()} disabled={!transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"><Copy className="h-4 w-4" />Copy</button><button type="button" onClick={() => void labelExistingTranscript()} disabled={labelingSpeakers || reTranscribing || creatingStory || !transcriptDraft.trim()} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{labelingSpeakers ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserRound className="h-4 w-4" />}{labelingSpeakers ? 'Labeling…' : 'Label speakers'}</button><button type="button" onClick={() => void reTranscribe()} disabled={reTranscribing || labelingSpeakers || creatingStory} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 disabled:cursor-not-allowed disabled:opacity-50">{reTranscribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}{reTranscribing ? 'Re-transcribing…' : 'Re-transcribe'}</button></div></div><textarea rows={12} value={transcriptDraft} onChange={(e) => setTranscriptDraft(e.target.value)} placeholder="The transcript will appear here after transcription finishes." className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed outline-none focus:border-[#a66b27] focus:ring-2 focus:ring-[#d8a95f]/40" /></div>
 
