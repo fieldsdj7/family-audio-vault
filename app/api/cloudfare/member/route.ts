@@ -1,4 +1,4 @@
-import { requireVaultMember, vaultAccessResponse } from "@/lib/cloudflare";
+import { requireVaultMember, vaultAccessResponse } from "../../../../lib/cloudflare";
 
 export async function GET(request: Request) {
   try {
