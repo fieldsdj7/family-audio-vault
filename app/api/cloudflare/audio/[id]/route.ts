@@ -14,7 +14,7 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-function fallbackContentType(storagePath: string) {
+function contentTypeForPath(storagePath: string, storedType: string | null) {
   const extension = storagePath.split(".").pop()?.toLowerCase();
 
   switch (extension) {
@@ -30,30 +30,53 @@ function fallbackContentType(storagePath: string) {
     case "webm":
       return "audio/webm";
     default:
-      return "application/octet-stream";
+      return storedType || "application/octet-stream";
   }
 }
 
-function rangeHeaders(object: R2ObjectBody, headers: Headers) {
-  if (!object.range) {
+function applyRangeHeaders(
+  object: R2ObjectBody,
+  headers: Headers,
+  requestedRange: boolean,
+) {
+  if (!requestedRange || !object.range) {
     headers.set("content-length", object.size.toString());
     return 200;
   }
 
-  let start: number;
-  let length: number;
+  const range = object.range as {
+    offset?: number;
+    length?: number;
+    suffix?: number;
+  };
 
-  if ("suffix" in object.range) {
-    length = Math.min(object.range.suffix, object.size);
+  let start = 0;
+  let length = object.size;
+
+  if (typeof range.suffix === "number") {
+    length = Math.min(range.suffix, object.size);
     start = object.size - length;
   } else {
-    start = object.range.offset ?? 0;
-    length = object.range.length ?? object.size - start;
+    start =
+      typeof range.offset === "number"
+        ? range.offset
+        : 0;
+
+    length =
+      typeof range.length === "number"
+        ? range.length
+        : object.size - start;
   }
 
-  const end = start + length - 1;
-  headers.set("content-length", length.toString());
-  headers.set("content-range", `bytes ${start}-${end}/${object.size}`);
+  const end = Math.min(start + length - 1, object.size - 1);
+  const actualLength = end - start + 1;
+
+  headers.set("content-length", actualLength.toString());
+  headers.set(
+    "content-range",
+    `bytes ${start}-${end}/${object.size}`,
+  );
+
   return 206;
 }
 
@@ -70,6 +93,7 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const { db, files } = await getVaultBindings();
+
     const audio = await db
       .prepare(
         `SELECT storage_path, vault_person
@@ -102,11 +126,16 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
-    const object = await files.get(audio.storage_path, {
-      range: request.headers,
-    });
+    const rangeHeader = request.headers.get("range");
 
-    if (!object) {
+    const object = await files.get(
+      audio.storage_path,
+      rangeHeader
+        ? { range: request.headers }
+        : undefined,
+    );
+
+    if (!object || !("body" in object)) {
       return Response.json(
         { error: "The audio file could not be found in storage." },
         { status: 404 },
@@ -114,14 +143,30 @@ export async function GET(request: Request, context: RouteContext) {
     }
 
     const headers = new Headers();
+
     object.writeHttpMetadata(headers);
+
     headers.set("accept-ranges", "bytes");
     headers.set("cache-control", "private, no-store");
-    headers.set("content-type", headers.get("content-type") ?? fallbackContentType(audio.storage_path));
+    headers.set(
+      "content-type",
+      contentTypeForPath(
+        audio.storage_path,
+        headers.get("content-type"),
+      ),
+    );
     headers.set("etag", object.httpEtag);
 
-    const status = rangeHeaders(object, headers);
-    return new Response(object.body, { status, headers });
+    const status = applyRangeHeaders(
+      object,
+      headers,
+      Boolean(rangeHeader),
+    );
+
+    return new Response(object.body, {
+      status,
+      headers,
+    });
   } catch (error) {
     return vaultAccessResponse(error);
   }
