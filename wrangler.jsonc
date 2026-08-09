@@ -10,6 +10,12 @@
   "vars": {
     "NEXT_PUBLIC_SUPABASE_URL": "https://vdetakeyuhsznfqpldvk.supabase.co"
   },
+"secrets": {
+  "required": [
+    "OPENAI_API_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY"
+  ]
+},
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
