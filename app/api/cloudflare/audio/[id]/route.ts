@@ -97,10 +97,9 @@ export async function GET(request: Request, context: RouteContext) {
     const audio = await db
       .prepare(
         `SELECT storage_path, vault_person
-         FROM audio_tracks
-         WHERE id = ?
-           AND trashed_at IS NULL
-           AND is_split_master = 0`,
+ FROM audio_tracks
+ WHERE id = ?
+   AND trashed_at IS NULL`,
       )
       .bind(id)
       .first<AudioRow>();
