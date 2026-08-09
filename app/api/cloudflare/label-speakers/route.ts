@@ -16,9 +16,8 @@ type TrackRow = {
   speaker_2_name: string | null;
 };
 
-type SpeakerResult = {
+type FormatResult = {
   transcript?: unknown;
-  speakerCount?: unknown;
 };
 
 type SecretEnv = CloudflareEnv & {
@@ -27,29 +26,6 @@ type SecretEnv = CloudflareEnv & {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function withoutSpeakerLabels(
-  value: string,
-  speaker1Name: string,
-  speaker2Name: string,
-) {
-  let cleaned = value.replace(
-    /(^|\n)\s*Speaker\s+\d+\s*:\s*/gi,
-    "$1",
-  );
-
-  for (const name of [speaker1Name, speaker2Name]) {
-    cleaned = cleaned.replace(
-      new RegExp(
-        `(^|\\n)\\s*${escapeRegExp(name)}\\s*:\\s*`,
-        "gi",
-      ),
-      "$1",
-    );
-  }
-
-  return cleaned.trim();
 }
 
 function wordTokens(value: string) {
@@ -64,59 +40,96 @@ function wordTokens(value: string) {
   );
 }
 
+function stripKnownLabels(
+  value: string,
+  speaker1Name: string,
+  speaker2Name: string,
+) {
+  let cleaned = value
+    .replace(
+      /(^|\n)\s*Speaker\s+1\s*:\s*/gi,
+      "$1",
+    )
+    .replace(
+      /(^|\n)\s*Speaker\s+2\s*:\s*/gi,
+      "$1",
+    );
+
+  for (const name of [
+    speaker1Name,
+    speaker2Name,
+  ]) {
+    cleaned = cleaned.replace(
+      new RegExp(
+        `(^|\\n)\\s*${escapeRegExp(
+          name,
+        )}\\s*:\\s*`,
+        "gi",
+      ),
+      "$1",
+    );
+  }
+
+  return cleaned.trim();
+}
+
 function hasTheSameWords(
   original: string,
-  labeled: string,
+  formatted: string,
   speaker1Name: string,
   speaker2Name: string,
 ) {
   const originalWords = wordTokens(
-    withoutSpeakerLabels(
+    stripKnownLabels(
       original,
       speaker1Name,
       speaker2Name,
     ),
   );
 
-  const labeledWords = wordTokens(
-    withoutSpeakerLabels(
-      labeled,
+  const formattedWords = wordTokens(
+    stripKnownLabels(
+      formatted,
       speaker1Name,
       speaker2Name,
     ),
   );
 
   return (
-    originalWords.length === labeledWords.length &&
+    originalWords.length ===
+      formattedWords.length &&
     originalWords.every(
-      (word, index) => word === labeledWords[index],
+      (word, index) =>
+        word === formattedWords[index],
     )
   );
 }
 
-function hasExpectedLabels(
+function applySpeakerNames(
   transcript: string,
   speaker1Name: string,
   speaker2Name: string,
 ) {
-  const first = new RegExp(
-    `(^|\\n)\\s*${escapeRegExp(speaker1Name)}\\s*:`,
-    "i",
-  );
-
-  const second = new RegExp(
-    `(^|\\n)\\s*${escapeRegExp(speaker2Name)}\\s*:`,
-    "i",
-  );
-
-  return first.test(transcript) && second.test(transcript);
+  return transcript
+    .replace(
+      /(^|\n)(\s*)Speaker\s+1\s*:\s*/gi,
+      `$1$2${speaker1Name}: `,
+    )
+    .replace(
+      /(^|\n)(\s*)Speaker\s+2\s*:\s*/gi,
+      `$1$2${speaker2Name}: `,
+    )
+    .trim();
 }
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+) {
   let trackId: string | null = null;
 
   try {
-    const member = await requireVaultMember(request);
+    const member =
+      await requireVaultMember(request);
 
     if (!member.isAdmin) {
       return Response.json(
@@ -128,12 +141,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as {
-      trackId?: unknown;
-      transcript?: unknown;
-      speaker1Name?: unknown;
-      speaker2Name?: unknown;
-    };
+    const body =
+      (await request.json()) as {
+        trackId?: unknown;
+        transcript?: unknown;
+        speaker1Name?: unknown;
+        speaker2Name?: unknown;
+      };
 
     trackId =
       typeof body.trackId === "string"
@@ -143,13 +157,15 @@ export async function POST(request: Request) {
     if (!trackId) {
       return Response.json(
         {
-          error: "A recording was not specified.",
+          error:
+            "A recording was not specified.",
         },
         { status: 400 },
       );
     }
 
-    const { db } = await getVaultBindings();
+    const { db } =
+      await getVaultBindings();
 
     const track = await db
       .prepare(
@@ -168,7 +184,8 @@ export async function POST(request: Request) {
     if (!track) {
       return Response.json(
         {
-          error: "The recording could not be found.",
+          error:
+            "The recording could not be found.",
         },
         { status: 404 },
       );
@@ -188,37 +205,34 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error:
-            "This recording needs a transcript before it can be formatted.",
+            "This recording needs a transcript first.",
         },
         { status: 400 },
       );
     }
 
-    const suppliedSpeaker1 =
-      typeof body.speaker1Name === "string"
-        ? body.speaker1Name.trim()
-        : "";
-
-    const suppliedSpeaker2 =
-      typeof body.speaker2Name === "string"
-        ? body.speaker2Name.trim()
-        : "";
-
     const speaker1Name =
-      suppliedSpeaker1 ||
-      track.speaker_1_name?.trim() ||
-      "";
+      typeof body.speaker1Name === "string" &&
+      body.speaker1Name.trim()
+        ? body.speaker1Name.trim()
+        : track.speaker_1_name?.trim() ||
+          "";
 
     const speaker2Name =
-      suppliedSpeaker2 ||
-      track.speaker_2_name?.trim() ||
-      "";
+      typeof body.speaker2Name === "string" &&
+      body.speaker2Name.trim()
+        ? body.speaker2Name.trim()
+        : track.speaker_2_name?.trim() ||
+          "";
 
-    if (!speaker1Name || !speaker2Name) {
+    if (
+      !speaker1Name ||
+      !speaker2Name
+    ) {
       return Response.json(
         {
           error:
-            "Enter names for Speaker 1 and Speaker 2 before formatting the transcript.",
+            "Enter names for Speaker 1 and Speaker 2 first.",
         },
         { status: 400 },
       );
@@ -237,147 +251,145 @@ export async function POST(request: Request) {
       );
     }
 
-    const { env } = await getCloudflareContext({
-      async: true,
-    });
+    /*
+     * First do the important part deterministically.
+     * No AI is needed to rename existing speaker labels.
+     */
+    const renamedTranscript =
+      applySpeakerNames(
+        originalTranscript,
+        speaker1Name,
+        speaker2Name,
+      );
+
+    let finalTranscript =
+      renamedTranscript;
+
+    let formattingApplied = false;
+
+    /*
+     * Punctuation/capitalization cleanup is optional.
+     * If AI changes any spoken words, we simply fall
+     * back to the safely renamed transcript.
+     */
+    const { env } =
+      await getCloudflareContext({
+        async: true,
+      });
 
     const openAiKey =
-      (env as SecretEnv).OPENAI_API_KEY;
+      (env as SecretEnv)
+        .OPENAI_API_KEY;
 
-    if (!openAiKey) {
-      return Response.json(
-        {
-          error:
-            "The transcript-formatting service has not been configured yet.",
-        },
-        { status: 500 },
-      );
-    }
-
-    const openAiResponse = await fetch(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openAiKey}`,
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          temperature: 0,
-
-          response_format: {
-            type: "json_object",
-          },
-
-          messages: [
+    if (openAiKey) {
+      try {
+        const openAiResponse =
+          await fetch(
+            "https://api.openai.com/v1/chat/completions",
             {
-              role: "system",
-              content: [
-                "Format a word-for-word family interview transcript for long-term preservation.",
-                `Speaker 1 is ${speaker1Name}.`,
-                `Speaker 2 is ${speaker2Name}.`,
-                `Label every speaker turn exactly as ${speaker1Name}: or ${speaker2Name}:.`,
-                "Use conversational context to determine which person is speaking.",
-                "The person asking the interview questions is often Speaker 1, but do not assume that every short phrase belongs to Speaker 1.",
-                "Keep each person's identity consistent throughout the transcript.",
+              method: "POST",
 
-                "You MAY correct capitalization at the beginning of sentences.",
-                "You MAY add or correct periods, commas, question marks, exclamation points, quotation marks, apostrophes, and other normal punctuation.",
-                "You MAY correct spacing around punctuation.",
-                "You MAY add paragraph breaks between speaker turns.",
+              headers: {
+                Authorization:
+                  `Bearer ${openAiKey}`,
+                "Content-Type":
+                  "application/json",
+              },
 
-                "You MUST preserve every spoken word in exactly the same order.",
-                "Do not substitute one word for another.",
-                "Do not add words.",
-                "Do not remove words.",
-                "Do not remove filler words.",
-                "Do not remove repeated words.",
-                "Do not rewrite grammar.",
-                "Do not summarize.",
-                "Do not improve the wording itself.",
+              body: JSON.stringify({
+                model:
+                  "gpt-4.1-mini",
 
-                "Capitalization, punctuation, spacing, paragraph breaks, and speaker labels are formatting only.",
-                "Return JSON only with transcript as a string and speakerCount as a number.",
-              ].join(" "),
+                temperature: 0,
+
+                response_format: {
+                  type:
+                    "json_object",
+                },
+
+                messages: [
+                  {
+                    role: "system",
+
+                    content: [
+                      "Clean up the formatting of this word-for-word family interview transcript.",
+                      "The speaker names are already correct and must remain exactly as written.",
+                      "Do not change which person says any line.",
+                      "You may correct sentence capitalization.",
+                      "You may add or correct commas, periods, question marks, exclamation points, quotation marks, apostrophes, and spacing.",
+                      "You may improve paragraph breaks.",
+                      "You must preserve every spoken word in exactly the same order.",
+                      "Do not add, remove, substitute, rewrite, summarize, or reorder spoken words.",
+                      "Do not remove filler words or repeated words.",
+                      "Return JSON only with transcript as a string.",
+                    ].join(" "),
+                  },
+
+                  {
+                    role: "user",
+                    content:
+                      renamedTranscript,
+                  },
+                ],
+              }),
             },
+          );
 
-            {
-              role: "user",
-              content: originalTranscript,
-            },
-          ],
-        }),
-      },
-    );
-
-    const responseBody =
-      (await openAiResponse.json()) as {
-        choices?: Array<{
-          message?: {
-            content?: string;
+        const responseBody =
+          (await openAiResponse.json()) as {
+            choices?: Array<{
+              message?: {
+                content?: string;
+              };
+            }>;
           };
-        }>;
-        error?: {
-          message?: string;
-        };
-      };
 
-    const content =
-      responseBody.choices?.[0]?.message?.content;
+        const content =
+          responseBody.choices?.[0]
+            ?.message?.content;
 
-    if (!openAiResponse.ok || !content) {
-      throw new Error(
-        responseBody.error?.message ||
-          "OpenAI could not format the transcript.",
-      );
-    }
+        if (
+          openAiResponse.ok &&
+          content
+        ) {
+          const parsed =
+            JSON.parse(
+              content,
+            ) as FormatResult;
 
-    let parsed: SpeakerResult;
+          const formatted =
+            typeof parsed.transcript ===
+            "string"
+              ? parsed.transcript.trim()
+              : "";
 
-    try {
-      parsed = JSON.parse(content) as SpeakerResult;
-    } catch {
-      throw new Error(
-        "OpenAI returned the formatted transcript in an unexpected format. Please try again.",
-      );
-    }
+          if (
+            formatted &&
+            hasTheSameWords(
+              renamedTranscript,
+              formatted,
+              speaker1Name,
+              speaker2Name,
+            )
+          ) {
+            finalTranscript =
+              formatted;
 
-    const labeledTranscript =
-      typeof parsed.transcript === "string"
-        ? parsed.transcript.trim()
-        : "";
+            formattingApplied =
+              true;
+          }
+        }
+      } catch (formatError) {
+        console.error(
+          "Optional transcript formatting failed.",
+          formatError,
+        );
 
-    const speakerCount = Number(
-      parsed.speakerCount || 0,
-    );
-
-    if (
-      !labeledTranscript ||
-      speakerCount < 2 ||
-      !hasExpectedLabels(
-        labeledTranscript,
-        speaker1Name,
-        speaker2Name,
-      )
-    ) {
-      throw new Error(
-        "OpenAI could not reliably separate the two speakers in this transcript.",
-      );
-    }
-
-    if (
-      !hasTheSameWords(
-        originalTranscript,
-        labeledTranscript,
-        speaker1Name,
-        speaker2Name,
-      )
-    ) {
-      throw new Error(
-        "Transcript formatting tried to change some spoken words, so the original transcript was kept safe. Please try again.",
-      );
+        /*
+         * Keep going.
+         * Speaker-name replacement is already safe.
+         */
+      }
     }
 
     await db
@@ -392,7 +404,7 @@ export async function POST(request: Request) {
          WHERE id = ?`,
       )
       .bind(
-        labeledTranscript,
+        finalTranscript,
         speaker1Name,
         speaker2Name,
         track.id,
@@ -400,10 +412,15 @@ export async function POST(request: Request) {
       .run();
 
     return Response.json({
-      transcript: labeledTranscript,
-      speakerCount,
+      transcript:
+        finalTranscript,
+
+      speakerCount: 2,
+
       speaker1Name,
       speaker2Name,
+
+      formattingApplied,
     });
   } catch (error) {
     const message =
@@ -416,7 +433,8 @@ export async function POST(request: Request) {
       !(error instanceof VaultAccessError)
     ) {
       try {
-        const { db } = await getVaultBindings();
+        const { db } =
+          await getVaultBindings();
 
         await db
           .prepare(
@@ -426,7 +444,10 @@ export async function POST(request: Request) {
                  updated_at = datetime('now')
              WHERE id = ?`,
           )
-          .bind(message, trackId)
+          .bind(
+            message,
+            trackId,
+          )
           .run();
       } catch (updateError) {
         console.error(
@@ -436,8 +457,13 @@ export async function POST(request: Request) {
       }
     }
 
-    if (error instanceof VaultAccessError) {
-      return vaultAccessResponse(error);
+    if (
+      error instanceof
+      VaultAccessError
+    ) {
+      return vaultAccessResponse(
+        error,
+      );
     }
 
     console.error(error);
