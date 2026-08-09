@@ -8,28 +8,28 @@ import {
 
 type SupabaseTrack = {
   id: string;
-  title: string | null;
-  speaker: string | null;
-  category: string | null;
-  vault_person: string | null;
-  storage_path: string | null;
-  audio_url: string | null;
-  transcript: string | null;
-  transcription_status: string | null;
-  transcription_error: string | null;
-  story_title: string | null;
-  story_chapter: string | null;
-  story_status: string | null;
-  story_error: string | null;
-  source_track_id: string | null;
-  clip_start_seconds: number | null;
-  clip_end_seconds: number | null;
-  split_notes: string | null;
-  is_split_master: number | boolean | null;
-  trashed_at: string | null;
-  trashed_by: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  title?: string | null;
+  speaker?: string | null;
+  category?: string | null;
+  vault_person?: string | null;
+  storage_path?: string | null;
+  audio_url?: string | null;
+  transcript?: string | null;
+  transcription_status?: string | null;
+  transcription_error?: string | null;
+  story_title?: string | null;
+  story_chapter?: string | null;
+  story_status?: string | null;
+  story_error?: string | null;
+  source_track_id?: string | null;
+  clip_start_seconds?: number | null;
+  clip_end_seconds?: number | null;
+  split_notes?: string | null;
+  is_split_master?: number | boolean | null;
+  trashed_at?: string | null;
+  trashed_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 function encodedStoragePath(path: string) {
@@ -46,7 +46,10 @@ function extensionFromTrack(track: SupabaseTrack) {
     "";
 
   const clean = source.split("?")[0];
-  const extension = clean.split(".").pop()?.toLowerCase();
+  const extension = clean
+    .split(".")
+    .pop()
+    ?.toLowerCase();
 
   if (
     extension &&
@@ -159,12 +162,15 @@ async function fetchSupabaseAudio(
   }
 
   if (track.audio_url) {
-    const response = await fetch(track.audio_url, {
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
+    const response = await fetch(
+      track.audio_url,
+      {
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+        },
       },
-    });
+    );
 
     if (!response.ok) {
       throw new Error(
@@ -215,48 +221,68 @@ export async function GET(request: Request) {
       );
     }
 
-    const tracks = await loadSupabaseTracks(
-      supabaseUrl,
-      serviceRoleKey,
-    );
+    const tracks =
+      await loadSupabaseTracks(
+        supabaseUrl,
+        serviceRoleKey,
+      );
 
     const summary = {
       total: tracks.length,
+
       Papa: tracks.filter(
-        (track) => track.vault_person === "Papa",
+        (track) =>
+          track.vault_person === "Papa",
       ).length,
+
       Dad: tracks.filter(
-        (track) => track.vault_person === "Dad",
+        (track) =>
+          track.vault_person === "Dad",
       ).length,
+
       Mom: tracks.filter(
-        (track) => track.vault_person === "Mom",
+        (track) =>
+          track.vault_person === "Mom",
       ).length,
+
       withTranscript: tracks.filter(
-        (track) => !!track.transcript?.trim(),
+        (track) =>
+          !!track.transcript?.trim(),
       ).length,
+
       withStory: tracks.filter(
-        (track) => !!track.story_chapter?.trim(),
+        (track) =>
+          !!track.story_chapter?.trim(),
       ).length,
+
       trashed: tracks.filter(
-        (track) => !!track.trashed_at,
+        (track) =>
+          !!track.trashed_at,
       ).length,
     };
 
     return Response.json({
       ready: true,
       summary,
+
       recordings: tracks.map((track) => ({
         id: track.id,
-        title: track.title,
-        vaultPerson: track.vault_person,
+        title: track.title ?? null,
+        vaultPerson:
+          track.vault_person ?? null,
+
         hasAudio:
           !!track.storage_path ||
           !!track.audio_url,
+
         hasTranscript:
           !!track.transcript?.trim(),
+
         hasStory:
           !!track.story_chapter?.trim(),
-        trashed: !!track.trashed_at,
+
+        trashed:
+          !!track.trashed_at,
       })),
     });
   } catch (error) {
@@ -269,15 +295,22 @@ export async function POST(request: Request) {
     const access =
       await requireAdministrator(request);
 
-    if (access.response || !access.member) {
+    if (
+      access.response ||
+      !access.member
+    ) {
       return access.response;
     }
 
-    const body = (await request.json()) as {
-      confirm?: unknown;
-    };
+    const body =
+      (await request.json()) as {
+        confirm?: unknown;
+      };
 
-    if (body.confirm !== "COPY SUPABASE TO CLOUDFLARE") {
+    if (
+      body.confirm !==
+      "COPY SUPABASE TO CLOUDFLARE"
+    ) {
       return Response.json(
         {
           error:
@@ -292,10 +325,11 @@ export async function POST(request: Request) {
         async: true,
       });
 
-    const env = context.env as unknown as {
-      NEXT_PUBLIC_SUPABASE_URL?: string;
-      SUPABASE_SERVICE_ROLE_KEY?: string;
-    };
+    const env =
+      context.env as unknown as {
+        NEXT_PUBLIC_SUPABASE_URL?: string;
+        SUPABASE_SERVICE_ROLE_KEY?: string;
+      };
 
     const supabaseUrl =
       env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -303,7 +337,10 @@ export async function POST(request: Request) {
     const serviceRoleKey =
       env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-    if (!supabaseUrl || !serviceRoleKey) {
+    if (
+      !supabaseUrl ||
+      !serviceRoleKey
+    ) {
       return Response.json(
         {
           error:
@@ -341,14 +378,15 @@ export async function POST(request: Request) {
     }> = [];
 
     /*
-     * Parents first. This makes it safer to restore
-     * source_track_id relationships afterward.
+     * Copy original/master recordings first.
+     * Split children are copied afterward.
      */
-    const tracks = [...sourceTracks].sort(
-      (a, b) =>
-        Number(!!a.source_track_id) -
-        Number(!!b.source_track_id),
-    );
+    const tracks =
+      [...sourceTracks].sort(
+        (a, b) =>
+          Number(!!a.source_track_id) -
+          Number(!!b.source_track_id),
+      );
 
     for (const track of tracks) {
       const title =
@@ -356,14 +394,15 @@ export async function POST(request: Request) {
         "Untitled recording";
 
       try {
-        const existing = await db
-          .prepare(
-            `SELECT id
-             FROM audio_tracks
-             WHERE id = ?`,
-          )
-          .bind(track.id)
-          .first<{ id: string }>();
+        const existing =
+          await db
+            .prepare(
+              `SELECT id
+               FROM audio_tracks
+               WHERE id = ?`,
+            )
+            .bind(track.id)
+            .first<{ id: string }>();
 
         if (existing) {
           skipped.push({
@@ -387,8 +426,8 @@ export async function POST(request: Request) {
           extensionFromTrack(track);
 
         /*
-         * Every migrated recording gets its own
-         * Cloudflare R2 object.
+         * Give every migrated row its own
+         * physical R2 object.
          */
         const storagePath =
           `recordings/${track.id}.${extension}`;
@@ -406,10 +445,14 @@ export async function POST(request: Request) {
                   extension,
                 ),
             },
+
             customMetadata: {
-              migratedFrom: "supabase",
+              migratedFrom:
+                "supabase",
+
               migratedBy:
                 access.member.email,
+
               originalStoragePath:
                 track.storage_path || "",
             },
@@ -458,45 +501,85 @@ export async function POST(request: Request) {
             )
             .bind(
               track.id,
+
               title,
+
               track.speaker?.trim() ||
                 "Unknown",
+
               track.category?.trim() ||
                 "General",
+
               track.vault_person ===
-                "Papa" ||
+                  "Papa" ||
                 track.vault_person ===
                   "Mom"
                 ? track.vault_person
                 : "Dad",
+
               storagePath,
-              track.transcript,
+
+              track.transcript ??
+                null,
+
               track.transcript?.trim()
                 ? "complete"
-                : track.transcription_status ||
+                : track.transcription_status ??
                     "not_started",
-              track.transcription_error,
-              track.story_title,
-              track.story_chapter,
+
+              track.transcription_error ??
+                null,
+
+              track.story_title ??
+                null,
+
+              track.story_chapter ??
+                null,
+
               track.story_chapter?.trim()
                 ? "complete"
-                : track.story_status ||
+                : track.story_status ??
                     "not_started",
-              track.story_error,
-              track.clip_start_seconds,
-              track.clip_end_seconds,
-              track.split_notes,
+
+              track.story_error ??
+                null,
+
+              track.clip_start_seconds ??
+                null,
+
+              track.clip_end_seconds ??
+                null,
+
+              track.split_notes ??
+                null,
+
               track.is_split_master
                 ? 1
                 : 0,
-              track.trashed_at,
-              track.trashed_by,
-              track.created_at,
-              track.updated_at,
+
+              track.trashed_at ??
+                null,
+
+              track.trashed_by ??
+                null,
+
+              track.created_at ??
+                null,
+
+              track.updated_at ??
+                null,
             )
             .run();
         } catch (databaseError) {
-          await files.delete(storagePath);
+          /*
+           * If D1 fails, remove the R2 copy
+           * so migration never leaves an
+           * orphaned object behind.
+           */
+          await files.delete(
+            storagePath,
+          );
+
           throw databaseError;
         }
 
@@ -509,6 +592,7 @@ export async function POST(request: Request) {
         failed.push({
           id: track.id,
           title,
+
           error:
             error instanceof Error
               ? error.message
@@ -518,8 +602,8 @@ export async function POST(request: Request) {
     }
 
     /*
-     * Restore split-source relationships only
-     * after all rows have been created.
+     * Restore split-source relationships
+     * only after all rows exist.
      */
     for (const track of tracks) {
       if (!track.source_track_id) {
@@ -527,29 +611,37 @@ export async function POST(request: Request) {
       }
 
       try {
-        const sourceExists = await db
-          .prepare(
-            `SELECT id
-             FROM audio_tracks
-             WHERE id = ?`,
-          )
-          .bind(track.source_track_id)
-          .first<{ id: string }>();
+        const sourceExists =
+          await db
+            .prepare(
+              `SELECT id
+               FROM audio_tracks
+               WHERE id = ?`,
+            )
+            .bind(
+              track.source_track_id,
+            )
+            .first<{ id: string }>();
 
-        const childExists = await db
-          .prepare(
-            `SELECT id
-             FROM audio_tracks
-             WHERE id = ?`,
-          )
-          .bind(track.id)
-          .first<{ id: string }>();
+        const childExists =
+          await db
+            .prepare(
+              `SELECT id
+               FROM audio_tracks
+               WHERE id = ?`,
+            )
+            .bind(track.id)
+            .first<{ id: string }>();
 
-        if (sourceExists && childExists) {
+        if (
+          sourceExists &&
+          childExists
+        ) {
           await db
             .prepare(
               `UPDATE audio_tracks
-               SET source_track_id = ?
+               SET source_track_id = ?,
+                   updated_at = datetime('now')
                WHERE id = ?`,
             )
             .bind(
@@ -561,9 +653,11 @@ export async function POST(request: Request) {
       } catch (error) {
         failed.push({
           id: track.id,
+
           title:
             track.title ||
             "Untitled recording",
+
           error:
             `Recording copied, but its split-source link could not be restored: ${
               error instanceof Error
@@ -577,14 +671,23 @@ export async function POST(request: Request) {
     return Response.json({
       migrationComplete:
         failed.length === 0,
+
       sourceRecordingCount:
         sourceTracks.length,
-      copiedCount: copied.length,
-      skippedCount: skipped.length,
-      failedCount: failed.length,
+
+      copiedCount:
+        copied.length,
+
+      skippedCount:
+        skipped.length,
+
+      failedCount:
+        failed.length,
+
       copied,
       skipped,
       failed,
+
       supabaseChanged: false,
     });
   } catch (error) {
