@@ -408,6 +408,8 @@ export default function AdminUpload() {
   async function reTranscribe() {
     if (!selectedTrack) return;
 
+    const trackId = selectedTrack.id;
+
     setReTranscribing(true);
     setEditorMessage(null);
 
@@ -420,7 +422,7 @@ export default function AdminUpload() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            trackId: selectedTrack.id,
+            trackId,
           }),
         },
       );
@@ -437,32 +439,63 @@ export default function AdminUpload() {
         );
       }
 
-      let speakerMessage = '';
-
+      /*
+       * Show the completed transcript immediately.
+       * Do not wait for speaker labeling first.
+       */
       if (result.transcript?.trim()) {
-        try {
-          const labeled = await requestSpeakerLabels(
-            selectedTrack.id,
-            result.transcript,
-          );
-
-          speakerMessage =
-            ` It was separated into ${
-              labeled.speakerCount || 2
-            } speakers.`;
-        } catch {
-          speakerMessage =
-            ' The transcript was saved, but automatic speaker labeling was not completed.';
-        }
+        setTranscriptDraft(result.transcript);
       }
+
+      await fetchTracks(trackId);
+
+      setReTranscribing(false);
 
       setEditorMessage({
         type: 'success',
         text:
-          `A fresh word-for-word transcript was created.${speakerMessage}`,
+          'The word-for-word transcript is complete. Speaker labeling is being checked now.',
       });
 
-      await fetchTracks(selectedTrack.id);
+      /*
+       * Speaker labeling is a separate second step.
+       * The transcript is already visible and saved.
+       */
+      if (result.transcript?.trim()) {
+        setLabelingSpeakers(true);
+
+        try {
+          const labeled =
+            await requestSpeakerLabels(
+              trackId,
+              result.transcript,
+            );
+
+          if (labeled.transcript?.trim()) {
+            setTranscriptDraft(
+              labeled.transcript,
+            );
+          }
+
+          await fetchTracks(trackId);
+
+          setEditorMessage({
+            type: 'success',
+            text:
+              `Transcript complete and separated into ${
+                labeled.speakerCount || 2
+              } speakers.`,
+          });
+        } catch {
+          setEditorMessage({
+            type: 'success',
+            text:
+              'The word-for-word transcript is complete. Automatic speaker labeling did not finish, but the transcript is safely saved.',
+          });
+        } finally {
+          setLabelingSpeakers(false);
+        }
+      }
     } catch (error) {
       setEditorMessage({
         type: 'error',
@@ -713,22 +746,45 @@ export default function AdminUpload() {
         return;
       }
 
+      /*
+       * Refresh immediately so the new transcript appears
+       * before optional speaker labeling.
+       */
+      await fetchTracks(newTrackId);
+      setTranscribing(false);
+
+      setMessage({
+        type: 'success',
+        text:
+          `Saved to ${vaultPerson}'s Vault. Transcript complete.`,
+      });
+
       if (transcriptionResult.transcript?.trim()) {
+        setLabelingSpeakers(true);
+
         try {
           await requestSpeakerLabels(
             newTrackId,
             transcriptionResult.transcript,
           );
+
+          await fetchTracks(newTrackId);
+
+          setMessage({
+            type: 'success',
+            text:
+              `Saved to ${vaultPerson}'s Vault, transcribed, and speaker labels added.`,
+          });
         } catch {
-          // Transcript remains safely saved.
+          setMessage({
+            type: 'success',
+            text:
+              `Saved to ${vaultPerson}'s Vault and transcribed. Automatic speaker labeling did not finish, but the transcript is safely saved.`,
+          });
+        } finally {
+          setLabelingSpeakers(false);
         }
       }
-
-      setMessage({
-        type: 'success',
-        text:
-          `Saved to ${vaultPerson}'s Vault and transcribed successfully.`,
-      });
 
       setTitle('');
       setSpeaker('');
@@ -736,8 +792,6 @@ export default function AdminUpload() {
       setQuestionId('');
       setFile(null);
       setFileInputKey((key) => key + 1);
-
-      await fetchTracks(newTrackId);
     } catch (error) {
       setMessage({
         type: 'error',
@@ -1305,8 +1359,10 @@ export default function AdminUpload() {
                           )}
 
                           {reTranscribing
-                            ? 'Re-transcribing…'
-                            : 'Re-transcribe'}
+                            ? 'Transcribing…'
+                            : transcriptDraft.trim()
+                              ? 'Re-transcribe'
+                              : 'Create transcript'}
                         </button>
                       </div>
                     </div>
