@@ -24,13 +24,17 @@ type SecretEnv = CloudflareEnv & {
 };
 
 function withoutSpeakerLabels(value: string) {
-  return value.replace(/(^|\n)\s*Speaker\s+\d+\s*:\s*/gi, "$1").trim();
+  return value
+    .replace(/(^|\n)\s*Speaker\s+\d+\s*:\s*/gi, "$1")
+    .trim();
 }
 
 function wordTokens(value: string) {
   return (
-    value.match(/[\p{L}\p{N}]+(?:['â€™][\p{L}\p{N}]+)*/gu) || []
-  ).map((word) => word.toLocaleLowerCase().replaceAll("â€™", "'"));
+    value.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu) || []
+  ).map((word) =>
+    word.toLocaleLowerCase().replaceAll("’", "'"),
+  );
 }
 
 function hasTheSameWords(original: string, labeled: string) {
