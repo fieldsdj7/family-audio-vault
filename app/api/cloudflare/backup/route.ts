@@ -8,7 +8,7 @@ import {
 
 export const maxDuration = 300;
 
-type AudioTrackRow = {
+type TrackRow = {
   id: string;
   title: string;
   speaker: string;
@@ -46,42 +46,23 @@ type PhotoRow = {
 };
 
 function safeFilePart(value: string) {
-  const cleaned = value
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+  return (value || "untitled")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 100);
-
-  return cleaned || "untitled";
+    .slice(0, 90);
 }
 
-function extensionFromPath(path: string) {
-  const fileName = path.split("/").pop() || "";
+function fileExtension(path: string) {
+  const cleanPath = path.split("?")[0];
+  const fileName = cleanPath.split("/").pop() || "";
   const dot = fileName.lastIndexOf(".");
 
   if (dot < 0 || dot === fileName.length - 1) {
-    return "bin";
+    return "audio";
   }
 
-  return fileName.slice(dot + 1).split("?")[0] || "bin";
-}
-
-async function addR2ObjectToZip(
-  zip: JSZip,
-  files: R2Bucket,
-  storagePath: string,
-  destination: string,
-) {
-  const object = await files.get(storagePath);
-
-  if (!object) {
-    return false;
-  }
-
-  const bytes = await object.arrayBuffer();
-  zip.file(destination, bytes);
-
-  return true;
+  return fileName.slice(dot + 1).toLowerCase();
 }
 
 export async function GET(request: Request) {
@@ -99,73 +80,111 @@ export async function GET(request: Request) {
 
     const [
       tracksResult,
-      questionsResult,
-      progressResult,
-      recordingLinksResult,
       reviewsResult,
+      questionsResult,
+      photosResult,
       membersResult,
       accessResult,
-      photosResult,
+      previousBackupsResult,
     ] = await Promise.all([
-      db.prepare("SELECT * FROM audio_tracks ORDER BY created_at ASC").all<AudioTrackRow>(),
-      db.prepare("SELECT * FROM questions ORDER BY question_number ASC").all(),
-      db.prepare("SELECT * FROM question_progress").all(),
-      db.prepare("SELECT * FROM question_recordings").all(),
-      db.prepare("SELECT * FROM audio_track_reviews").all(),
-      db.prepare("SELECT * FROM vault_members ORDER BY email ASC").all(),
-      db.prepare("SELECT * FROM vault_access ORDER BY member_email ASC").all(),
       db
         .prepare(
-          `SELECT
-             id,
-             audio_track_id,
-             storage_path,
-             caption,
-             sort_order,
-             created_at,
-             updated_at
+          `SELECT *
+           FROM audio_tracks
+           ORDER BY created_at ASC`,
+        )
+        .all<TrackRow>(),
+
+      db
+        .prepare(
+          `SELECT *
+           FROM audio_track_reviews
+           ORDER BY audio_track_id ASC`,
+        )
+        .all(),
+
+      db
+        .prepare(
+          `SELECT *
+           FROM questions
+           ORDER BY question_number ASC`,
+        )
+        .all(),
+
+      db
+        .prepare(
+          `SELECT *
            FROM story_photos
-           ORDER BY audio_track_id, sort_order, created_at`,
+           ORDER BY audio_track_id ASC, sort_order ASC, created_at ASC`,
         )
         .all<PhotoRow>(),
+
+      db
+        .prepare(
+          `SELECT *
+           FROM vault_members
+           ORDER BY email ASC`,
+        )
+        .all(),
+
+      db
+        .prepare(
+          `SELECT *
+           FROM vault_access
+           ORDER BY member_email ASC, vault_person ASC`,
+        )
+        .all(),
+
+      db
+        .prepare(
+          `SELECT *
+           FROM vault_backup_history
+           ORDER BY created_at ASC, id ASC`,
+        )
+        .all(),
     ]);
 
     const tracks = tracksResult.results;
     const photos = photosResult.results;
+    const createdAt = new Date().toISOString();
 
     const zip = new JSZip();
 
-    const createdAt = new Date().toISOString();
-
     zip.file(
-      "README.txt",
+      "START-HERE.txt",
       [
-        "Fields Family Audio Vault — Full Backup",
+        "FIELDS FAMILY VAULT — FULL BACKUP",
         "",
-        `Created: ${createdAt}`,
+        `Backup created: ${createdAt}`,
         `Created by: ${member.email}`,
         "",
-        "This archive was created from the Cloudflare version of the Fields Family Vault.",
+        "This ZIP is intended to preserve the family archive even if the website",
+        "is no longer available.",
         "",
-        "It contains:",
-        "- Original audio files stored in Cloudflare R2",
-        "- Saved photographs stored in Cloudflare R2",
-        "- Word-for-word transcripts",
-        "- Family stories",
-        "- Recording metadata",
-        "- Questions and question progress",
-        "- Recording/question relationships",
-        "- Review information",
-        "- Vault member/access information",
+        "WHAT IS INCLUDED",
         "",
-        "The original files in the live Vault were not changed or removed.",
+        "audio/",
+        "  Original audio files stored in Cloudflare R2.",
         "",
-        "Folders:",
-        "- audio/        Original recordings",
-        "- photos/       Story photographs",
-        "- transcripts/  Word-for-word transcripts",
-        "- stories/      Family-story text",
-        "- metadata/     Complete Vault data in JSON format",
+        "transcripts/",
+        "  Readable word-for-word transcript files.",
+        "",
+        "stories/",
+        "  Readable family-story files.",
+        "",
+        "photos/",
+        "  Story photographs currently stored in the Vault.",
+        "",
+        "metadata/",
+        "  Complete database information in JSON format.",
+        "",
+        "IMPORTANT",
+        "",
+        "Split-answer entries may point to the same original audio recording.",
+        "The backup stores each unique original audio file once while preserving",
+        "all split information and relationships in metadata/audio_tracks.json.",
+        "",
+        "Nothing in the live Vault was removed or changed by creating this backup.",
       ].join("\n"),
     );
 
@@ -175,23 +194,18 @@ export async function GET(request: Request) {
     );
 
     zip.file(
+      "metadata/audio_track_reviews.json",
+      JSON.stringify(reviewsResult.results, null, 2),
+    );
+
+    zip.file(
       "metadata/questions.json",
       JSON.stringify(questionsResult.results, null, 2),
     );
 
     zip.file(
-      "metadata/question_progress.json",
-      JSON.stringify(progressResult.results, null, 2),
-    );
-
-    zip.file(
-      "metadata/question_recordings.json",
-      JSON.stringify(recordingLinksResult.results, null, 2),
-    );
-
-    zip.file(
-      "metadata/audio_track_reviews.json",
-      JSON.stringify(reviewsResult.results, null, 2),
+      "metadata/story_photos.json",
+      JSON.stringify(photos, null, 2),
     );
 
     zip.file(
@@ -205,8 +219,8 @@ export async function GET(request: Request) {
     );
 
     zip.file(
-      "metadata/story_photos.json",
-      JSON.stringify(photos, null, 2),
+      "metadata/vault_backup_history.json",
+      JSON.stringify(previousBackupsResult.results, null, 2),
     );
 
     const missingAudio: Array<{
@@ -215,7 +229,7 @@ export async function GET(request: Request) {
       storagePath: string;
     }> = [];
 
-    const copiedAudioPaths = new Set<string>();
+    const audioFiles = new Map<string, string>();
     let audioFileCount = 0;
 
     for (let index = 0; index < tracks.length; index += 1) {
@@ -226,7 +240,9 @@ export async function GET(request: Request) {
         ? "unknown-date"
         : date.toISOString().slice(0, 10);
 
-      const baseName = `${String(index + 1).padStart(3, "0")}-${datePart}-${safeFilePart(track.title)}`;
+      const baseName =
+        `${String(index + 1).padStart(3, "0")}-` +
+        `${datePart}-${safeFilePart(track.title)}`;
 
       zip.file(
         `transcripts/${baseName}.txt`,
@@ -236,6 +252,18 @@ export async function GET(request: Request) {
           `Speaker: ${track.speaker}`,
           `Category: ${track.category || "General"}`,
           `Created: ${track.created_at}`,
+          `Question ID: ${track.question_id || "None"}`,
+          `Source Track ID: ${track.source_track_id || "None"}`,
+          `Clip Start: ${
+            track.clip_start_seconds === null
+              ? "None"
+              : `${track.clip_start_seconds} seconds`
+          }`,
+          `Clip End: ${
+            track.clip_end_seconds === null
+              ? "None"
+              : `${track.clip_end_seconds} seconds`
+          }`,
           "",
           track.transcript || "[No transcript saved]",
         ].join("\n"),
@@ -248,6 +276,7 @@ export async function GET(request: Request) {
             `Title: ${track.story_title || track.title}`,
             `Source recording: ${track.title}`,
             `Vault: ${track.vault_person}`,
+            `Created: ${track.created_at}`,
             "",
             track.story_chapter || "[No family story saved]",
           ].join("\n"),
@@ -256,31 +285,38 @@ export async function GET(request: Request) {
 
       const storagePath = track.storage_path?.trim();
 
-      if (!storagePath || copiedAudioPaths.has(storagePath)) {
+      if (!storagePath) {
         continue;
       }
 
-      copiedAudioPaths.add(storagePath);
+      if (audioFiles.has(storagePath)) {
+        continue;
+      }
 
-      const extension = extensionFromPath(storagePath);
-      const destination = `audio/${baseName}.${extension}`;
+      const object = await files.get(storagePath);
 
-      const copied = await addR2ObjectToZip(
-        zip,
-        files,
-        storagePath,
-        destination,
-      );
-
-      if (copied) {
-        audioFileCount += 1;
-      } else {
+      if (!object) {
         missingAudio.push({
           recordingId: track.id,
           title: track.title,
           storagePath,
         });
+
+        continue;
       }
+
+      const extension = fileExtension(storagePath);
+      const audioName =
+        `${String(audioFileCount + 1).padStart(3, "0")}-` +
+        `${safeFilePart(track.title)}.${extension}`;
+
+      zip.file(
+        `audio/${audioName}`,
+        await object.arrayBuffer(),
+      );
+
+      audioFiles.set(storagePath, `audio/${audioName}`);
+      audioFileCount += 1;
     }
 
     const missingPhotos: Array<{
@@ -292,37 +328,49 @@ export async function GET(request: Request) {
 
     for (let index = 0; index < photos.length; index += 1) {
       const photo = photos[index];
-      const extension = extensionFromPath(photo.storage_path);
 
-      const destination =
-        `photos/${String(index + 1).padStart(3, "0")}-${safeFilePart(photo.id)}.${extension}`;
+      const object = await files.get(photo.storage_path);
 
-      const copied = await addR2ObjectToZip(
-        zip,
-        files,
-        photo.storage_path,
-        destination,
-      );
-
-      if (copied) {
-        photoFileCount += 1;
-      } else {
+      if (!object) {
         missingPhotos.push({
           photoId: photo.id,
           storagePath: photo.storage_path,
         });
+
+        continue;
       }
+
+      const extension = fileExtension(photo.storage_path);
+
+      const photoName =
+        `${String(index + 1).padStart(3, "0")}-` +
+        `${safeFilePart(photo.id)}.${extension}`;
+
+      zip.file(
+        `photos/${photoName}`,
+        await object.arrayBuffer(),
+      );
+
+      photoFileCount += 1;
     }
 
     zip.file(
-      "metadata/backup_report.json",
+      "metadata/audio-file-map.json",
+      JSON.stringify(
+        Object.fromEntries(audioFiles),
+        null,
+        2,
+      ),
+    );
+
+    zip.file(
+      "metadata/backup-report.json",
       JSON.stringify(
         {
           createdAt,
           createdBy: member.email,
           recordingCount: tracks.length,
-          uniqueReferencedAudioFiles: copiedAudioPaths.size,
-          audioFilesIncluded: audioFileCount,
+          uniqueAudioFilesIncluded: audioFileCount,
           photoFilesIncluded: photoFileCount,
           missingAudio,
           missingPhotos,
@@ -332,8 +380,37 @@ export async function GET(request: Request) {
       ),
     );
 
-    const zipBytes = await zip.generateAsync({
-      type: "uint8array",
+    if (missingAudio.length > 0 || missingPhotos.length > 0) {
+      zip.file(
+        "MISSING-FILES.txt",
+        [
+          "FIELDS FAMILY VAULT — MISSING FILE REPORT",
+          "",
+          "The database information for these items is included in the backup,",
+          "but the corresponding file could not be found in Cloudflare R2.",
+          "",
+          "MISSING AUDIO",
+          "",
+          ...(missingAudio.length
+            ? missingAudio.map(
+                (item) =>
+                  `${item.title} | ${item.recordingId} | ${item.storagePath}`,
+              )
+            : ["None"]),
+          "",
+          "MISSING PHOTOS",
+          "",
+          ...(missingPhotos.length
+            ? missingPhotos.map(
+                (item) => `${item.photoId} | ${item.storagePath}`,
+              )
+            : ["None"]),
+        ].join("\n"),
+      );
+    }
+
+    const zipData = await zip.generateAsync({
+      type: "arraybuffer",
       compression: "DEFLATE",
       compressionOptions: {
         level: 6,
@@ -348,26 +425,27 @@ export async function GET(request: Request) {
            audio_file_count,
            missing_audio_count,
            backup_size_bytes
-         ) VALUES (?, ?, ?, ?, ?)`,
+         )
+         VALUES (?, ?, ?, ?, ?)`,
       )
       .bind(
         member.email,
         tracks.length,
         audioFileCount,
         missingAudio.length,
-        zipBytes.byteLength,
+        zipData.byteLength,
       )
       .run();
 
     const fileDate = createdAt.slice(0, 10);
 
-    return new Response(zipBytes, {
+    return new Response(zipData, {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition":
           `attachment; filename="fields-family-vault-backup-${fileDate}.zip"`,
-        "Content-Length": String(zipBytes.byteLength),
+        "Content-Length": String(zipData.byteLength),
         "Cache-Control": "no-store",
       },
     });
