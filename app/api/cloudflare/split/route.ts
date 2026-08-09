@@ -5,6 +5,8 @@ import {
   vaultAccessResponse,
 } from "../../../../lib/cloudflare";
 
+const MAX_CLIP_BYTES = 95 * 1024 * 1024;
+
 type SourceRecordingRow = {
   id: string;
   title: string;
@@ -13,18 +15,30 @@ type SourceRecordingRow = {
   vault_person: VaultPerson;
   storage_path: string | null;
   transcript: string | null;
-  is_split_master: number;
   created_at: string;
 };
 
-function optionalText(value: unknown) {
-  if (value === undefined || value === null) return null;
-  return typeof value === "string" ? value.trim() || null : undefined;
+function textField(form: FormData, name: string) {
+  const value = form.get(name);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function optionalText(form: FormData, name: string) {
+  const value = textField(form, name);
+  return value || null;
+}
+
+function numberField(form: FormData, name: string) {
+  const value = Number(textField(form, name));
+  return Number.isFinite(value) ? value : Number.NaN;
 }
 
 function formatTime(seconds: number) {
   const wholeSeconds = Math.floor(seconds);
-  return `${Math.floor(wholeSeconds / 60)}:${String(wholeSeconds % 60).padStart(2, "0")}`;
+
+  return `${Math.floor(wholeSeconds / 60)}:${String(
+    wholeSeconds % 60,
+  ).padStart(2, "0")}`;
 }
 
 async function requireAdministrator(request: Request) {
@@ -49,6 +63,7 @@ export async function GET(request: Request) {
     if (access.response) return access.response;
 
     const { db } = await getVaultBindings();
+
     const recordings = await db
       .prepare(
         `SELECT
@@ -59,7 +74,6 @@ export async function GET(request: Request) {
            vault_person,
            storage_path,
            transcript,
-           is_split_master,
            created_at
          FROM audio_tracks
          WHERE trashed_at IS NULL
@@ -68,43 +82,56 @@ export async function GET(request: Request) {
       )
       .all<SourceRecordingRow>();
 
-    return Response.json({ recordings: recordings.results });
+    return Response.json({
+      recordings: recordings.results,
+    });
   } catch (error) {
     return vaultAccessResponse(error);
   }
 }
 
 export async function POST(request: Request) {
+  let uploadedPath: string | null = null;
+
   try {
     const access = await requireAdministrator(request);
-    if (access.response) return access.response;
 
-    const body = (await request.json()) as {
-      sourceRecordingId?: unknown;
-      startSeconds?: unknown;
-      endSeconds?: unknown;
-      title?: unknown;
-      transcript?: unknown;
-      notes?: unknown;
-      questionId?: unknown;
-    };
-    const sourceRecordingId =
-      typeof body.sourceRecordingId === "string"
-        ? body.sourceRecordingId.trim()
-        : "";
-    const startSeconds =
-      typeof body.startSeconds === "number" ? body.startSeconds : Number.NaN;
-    const endSeconds =
-      typeof body.endSeconds === "number" ? body.endSeconds : Number.NaN;
-    const title = optionalText(body.title);
-    const transcript = optionalText(body.transcript);
-    const notes = optionalText(body.notes);
-    const questionId = optionalText(body.questionId);
+    if (access.response || !access.member) {
+      return access.response;
+    }
+
+    const form = await request.formData();
+
+    const clip = form.get("clip");
+    const sourceRecordingId = textField(form, "sourceRecordingId");
+    const startSeconds = numberField(form, "startSeconds");
+    const endSeconds = numberField(form, "endSeconds");
+    const title = optionalText(form, "title");
+    const transcript = optionalText(form, "transcript");
+    const notes = optionalText(form, "notes");
+    const questionId = optionalText(form, "questionId");
 
     if (!sourceRecordingId) {
       return Response.json(
         { error: "Choose the original recording first." },
         { status: 400 },
+      );
+    }
+
+    if (
+      !(clip instanceof File) ||
+      clip.size === 0
+    ) {
+      return Response.json(
+        { error: "The clipped audio file is required." },
+        { status: 400 },
+      );
+    }
+
+    if (clip.size > MAX_CLIP_BYTES) {
+      return Response.json(
+        { error: "The clipped audio file must be smaller than 95 MB." },
+        { status: 413 },
       );
     }
 
@@ -115,14 +142,10 @@ export async function POST(request: Request) {
       endSeconds <= startSeconds
     ) {
       return Response.json(
-        { error: "Enter a valid start and end time. The end must be after the start." },
-        { status: 400 },
-      );
-    }
-
-    if (title === undefined || transcript === undefined || notes === undefined || questionId === undefined) {
-      return Response.json(
-        { error: "Split recording details must be text." },
+        {
+          error:
+            "Enter a valid start and end time. The end must be after the start.",
+        },
         { status: 400 },
       );
     }
@@ -134,7 +157,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const { db } = await getVaultBindings();
+    const { db, files } = await getVaultBindings();
+
     const source = await db
       .prepare(
         `SELECT
@@ -145,7 +169,6 @@ export async function POST(request: Request) {
            vault_person,
            storage_path,
            transcript,
-           is_split_master,
            created_at
          FROM audio_tracks
          WHERE id = ?
@@ -164,14 +187,21 @@ export async function POST(request: Request) {
 
     if (!source.storage_path) {
       return Response.json(
-        { error: "The original audio file has not been copied to Cloudflare yet." },
+        {
+          error:
+            "The original audio file has not been copied to Cloudflare yet.",
+        },
         { status: 409 },
       );
     }
 
     if (questionId) {
       const question = await db
-        .prepare("SELECT id FROM questions WHERE id = ?")
+        .prepare(
+          `SELECT id
+           FROM questions
+           WHERE id = ?`,
+        )
         .bind(questionId)
         .first<{ id: string }>();
 
@@ -184,9 +214,30 @@ export async function POST(request: Request) {
     }
 
     const recordingId = crypto.randomUUID();
+
     const recordingTitle =
       title ||
-      `${source.title} (${formatTime(startSeconds)}â€“${formatTime(endSeconds)})`;
+      `${source.title} (${formatTime(startSeconds)}–${formatTime(
+        endSeconds,
+      )})`;
+
+    uploadedPath = `recordings/${recordingId}.wav`;
+
+    await files.put(
+      uploadedPath,
+      clip.stream(),
+      {
+        httpMetadata: {
+          contentType: "audio/wav",
+        },
+        customMetadata: {
+          sourceRecordingId: source.id,
+          uploadedBy: access.member.email,
+          clipStartSeconds: String(startSeconds),
+          clipEndSeconds: String(endSeconds),
+        },
+      },
+    );
 
     await db.batch([
       db
@@ -205,7 +256,8 @@ export async function POST(request: Request) {
              clip_start_seconds,
              clip_end_seconds,
              split_notes
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           recordingId,
@@ -214,7 +266,7 @@ export async function POST(request: Request) {
           source.category || "General",
           source.vault_person,
           questionId,
-          source.storage_path,
+          uploadedPath,
           transcript,
           transcript ? "complete" : "not_started",
           source.id,
@@ -222,6 +274,7 @@ export async function POST(request: Request) {
           endSeconds,
           notes,
         ),
+
       db
         .prepare(
           `UPDATE audio_tracks
@@ -241,18 +294,34 @@ export async function POST(request: Request) {
           category: source.category || "General",
           vault_person: source.vault_person,
           question_id: questionId,
+          storage_path: uploadedPath,
           source_track_id: source.id,
           clip_start_seconds: startSeconds,
           clip_end_seconds: endSeconds,
           transcript,
           split_notes: notes,
-          transcription_status: transcript ? "complete" : "not_started",
+          transcription_status: transcript
+            ? "complete"
+            : "not_started",
         },
         originalPreserved: true,
+        physicalAudioClip: true,
       },
       { status: 201 },
     );
   } catch (error) {
+    if (uploadedPath) {
+      try {
+        const { files } = await getVaultBindings();
+        await files.delete(uploadedPath);
+      } catch (cleanupError) {
+        console.error(
+          "Could not remove an incomplete split audio file.",
+          cleanupError,
+        );
+      }
+    }
+
     return vaultAccessResponse(error);
   }
 }
