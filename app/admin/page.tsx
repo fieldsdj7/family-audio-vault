@@ -73,6 +73,7 @@ export default function AdminUpload() {
   const [speaker, setSpeaker] = useState('');
   const [vaultPerson, setVaultPerson] =
     useState<VaultPerson>('Dad');
+
   const [category, setCategory] = useState('General');
   const [questionId, setQuestionId] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -86,7 +87,7 @@ export default function AdminUpload() {
     text: string;
   } | null>(null);
 
-  const [tracks, setTracks] = useState<AudioTrack[]>([]);
+  const [allTracks, setAllTracks] = useState<AudioTrack[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
 
@@ -97,7 +98,8 @@ export default function AdminUpload() {
 
   const [savingEditor, setSavingEditor] = useState(false);
   const [reTranscribing, setReTranscribing] = useState(false);
-  const [labelingSpeakers, setLabelingSpeakers] = useState(false);
+  const [labelingSpeakers, setLabelingSpeakers] =
+    useState(false);
   const [creatingStory, setCreatingStory] = useState(false);
 
   const [storyAction, setStoryAction] =
@@ -112,8 +114,14 @@ export default function AdminUpload() {
 
   const editorAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  const visibleTracks = allTracks.filter(
+    (track) => track.vault_person === vaultPerson,
+  );
+
   const selectedTrack =
-    tracks.find((track) => track.id === selectedTrackId) || null;
+    visibleTracks.find(
+      (track) => track.id === selectedTrackId,
+    ) || null;
 
   useEffect(() => {
     void start();
@@ -155,15 +163,19 @@ export default function AdminUpload() {
     if (typeof window === 'undefined') return '';
 
     return (
-      new URLSearchParams(window.location.search).get('trackId') || ''
+      new URLSearchParams(window.location.search).get('trackId') ||
+      ''
     );
   }
 
   async function fetchQuestions() {
     try {
-      const response = await fetch('/api/cloudflare/questions', {
-        cache: 'no-store',
-      });
+      const response = await fetch(
+        '/api/cloudflare/questions',
+        {
+          cache: 'no-store',
+        },
+      );
 
       const data = (await response.json()) as {
         questions?: Question[];
@@ -173,17 +185,27 @@ export default function AdminUpload() {
         setQuestions(data.questions || []);
       }
     } catch {
-      // Questions are optional during upload.
+      // Question linking is optional.
     }
+  }
+
+  function loadTrackIntoEditor(track: AudioTrack | null) {
+    setSelectedTrackId(track?.id || '');
+    setTranscriptDraft(track?.transcript || '');
+    setStoryTitleDraft(track?.story_title || '');
+    setStoryDraft(track?.story_chapter || '');
   }
 
   async function fetchTracks(preferredId?: string) {
     setLoadingTracks(true);
 
     try {
-      const response = await fetch('/api/cloudflare/recordings', {
-        cache: 'no-store',
-      });
+      const response = await fetch(
+        '/api/cloudflare/recordings',
+        {
+          cache: 'no-store',
+        },
+      );
 
       const data = (await response.json()) as {
         recordings?: AudioTrack[];
@@ -197,22 +219,30 @@ export default function AdminUpload() {
       }
 
       const nextTracks = data.recordings || [];
-      setTracks(nextTracks);
+      setAllTracks(nextTracks);
 
       const requested =
         preferredId ||
         requestedTrackId() ||
         selectedTrackId;
 
-      const nextTrack =
-        nextTracks.find((track) => track.id === requested) ||
-        nextTracks[0] ||
-        null;
+      const requestedTrack =
+        nextTracks.find(
+          (track) => track.id === requested,
+        ) || null;
 
-      setSelectedTrackId(nextTrack?.id || '');
-      setTranscriptDraft(nextTrack?.transcript || '');
-      setStoryTitleDraft(nextTrack?.story_title || '');
-      setStoryDraft(nextTrack?.story_chapter || '');
+      if (requestedTrack) {
+        setVaultPerson(requestedTrack.vault_person);
+        loadTrackIntoEditor(requestedTrack);
+        return;
+      }
+
+      const firstForCurrentVault =
+        nextTracks.find(
+          (track) => track.vault_person === vaultPerson,
+        ) || null;
+
+      loadTrackIntoEditor(firstForCurrentVault);
     } catch (error) {
       setEditorMessage({
         type: 'error',
@@ -226,18 +256,47 @@ export default function AdminUpload() {
     }
   }
 
+  function chooseVault(value: VaultPerson) {
+    setVaultPerson(value);
+    setEditorMessage(null);
+
+    const firstTrack =
+      allTracks.find(
+        (track) => track.vault_person === value,
+      ) || null;
+
+    loadTrackIntoEditor(firstTrack);
+
+    const url = new URL(window.location.href);
+
+    if (firstTrack) {
+      url.searchParams.set('trackId', firstTrack.id);
+    } else {
+      url.searchParams.delete('trackId');
+    }
+
+    window.history.replaceState({}, '', url);
+  }
+
   function chooseTrack(id: string) {
     const track =
-      tracks.find((item) => item.id === id) || null;
+      allTracks.find(
+        (item) =>
+          item.id === id &&
+          item.vault_person === vaultPerson,
+      ) || null;
 
-    setSelectedTrackId(id);
-    setTranscriptDraft(track?.transcript || '');
-    setStoryTitleDraft(track?.story_title || '');
-    setStoryDraft(track?.story_chapter || '');
+    loadTrackIntoEditor(track);
     setEditorMessage(null);
 
     const url = new URL(window.location.href);
-    url.searchParams.set('trackId', id);
+
+    if (track) {
+      url.searchParams.set('trackId', track.id);
+    } else {
+      url.searchParams.delete('trackId');
+    }
+
     window.history.replaceState({}, '', url);
   }
 
@@ -269,7 +328,8 @@ export default function AdminUpload() {
 
       if (!response.ok) {
         throw new Error(
-          result.error || 'Your changes could not be saved.',
+          result.error ||
+            'Your changes could not be saved.',
         );
       }
 
@@ -337,7 +397,8 @@ export default function AdminUpload() {
 
     if (!response.ok || !result.transcript) {
       throw new Error(
-        result.error || 'The speakers could not be labeled.',
+        result.error ||
+          'The speakers could not be labeled.',
       );
     }
 
@@ -371,7 +432,8 @@ export default function AdminUpload() {
 
       if (!response.ok) {
         throw new Error(
-          result.error || 'The transcript could not be created.',
+          result.error ||
+            'The transcript could not be created.',
         );
       }
 
@@ -385,7 +447,9 @@ export default function AdminUpload() {
           );
 
           speakerMessage =
-            ` It was separated into ${labeled.speakerCount || 2} speakers.`;
+            ` It was separated into ${
+              labeled.speakerCount || 2
+            } speakers.`;
         } catch {
           speakerMessage =
             ' The transcript was saved, but automatic speaker labeling was not completed.';
@@ -429,7 +493,9 @@ export default function AdminUpload() {
       setEditorMessage({
         type: 'success',
         text:
-          `The transcript was separated into ${result.speakerCount || 2} speakers without changing its words.`,
+          `The transcript was separated into ${
+            result.speakerCount || 2
+          } speakers without changing its words.`,
       });
 
       await fetchTracks(selectedTrack.id);
@@ -471,8 +537,6 @@ export default function AdminUpload() {
     setEditorMessage(null);
 
     try {
-      // Save any transcript corrections before asking AI
-      // to create the story.
       const saveTranscriptResponse = await fetch(
         `/api/cloudflare/recordings/${selectedTrack.id}`,
         {
@@ -498,18 +562,21 @@ export default function AdminUpload() {
         );
       }
 
-      const response = await fetch('/api/cloudflare/story', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        '/api/cloudflare/story',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            trackId: selectedTrack.id,
+            mode,
+            currentTitle: storyTitleDraft,
+            currentStory: storyDraft,
+          }),
         },
-        body: JSON.stringify({
-          trackId: selectedTrack.id,
-          mode,
-          currentTitle: storyTitleDraft,
-          currentStory: storyDraft,
-        }),
-      });
+      );
 
       const result = (await response.json()) as {
         error?: string;
@@ -517,7 +584,8 @@ export default function AdminUpload() {
 
       if (!response.ok) {
         throw new Error(
-          result.error || 'The family story could not be created.',
+          result.error ||
+            'The family story could not be created.',
         );
       }
 
@@ -577,22 +645,26 @@ export default function AdminUpload() {
         },
       );
 
-      const uploadResult = (await uploadResponse.json()) as {
-        error?: string;
-        recording?: {
+      const uploadResult =
+        (await uploadResponse.json()) as {
+          error?: string;
+          recording?: {
+            id?: string;
+          };
           id?: string;
         };
-        id?: string;
-      };
 
       if (!uploadResponse.ok) {
         throw new Error(
-          uploadResult.error || 'The recording could not be saved.',
+          uploadResult.error ||
+            'The recording could not be saved.',
         );
       }
 
       const newTrackId =
-        uploadResult.recording?.id || uploadResult.id || '';
+        uploadResult.recording?.id ||
+        uploadResult.id ||
+        '';
 
       if (!newTrackId) {
         throw new Error(
@@ -601,6 +673,7 @@ export default function AdminUpload() {
       }
 
       setTranscribing(true);
+
       setMessage({
         type: 'success',
         text:
@@ -631,7 +704,8 @@ export default function AdminUpload() {
           type: 'error',
           text:
             `The recording was safely saved, but the transcript could not be created: ${
-              transcriptionResult.error || 'Unknown error'
+              transcriptionResult.error ||
+              'Unknown error'
             }`,
         });
 
@@ -646,7 +720,7 @@ export default function AdminUpload() {
             transcriptionResult.transcript,
           );
         } catch {
-          // The original transcript remains safely saved.
+          // Transcript remains safely saved.
         }
       }
 
@@ -658,7 +732,6 @@ export default function AdminUpload() {
 
       setTitle('');
       setSpeaker('');
-      setVaultPerson('Dad');
       setCategory('General');
       setQuestionId('');
       setFile(null);
@@ -683,15 +756,20 @@ export default function AdminUpload() {
     setBackingUp(true);
 
     try {
-      const response = await fetch('/api/cloudflare/backup');
+      const response = await fetch(
+        '/api/cloudflare/backup',
+      );
 
       if (!response.ok) {
-        const result = (await response.json().catch(() => null)) as {
+        const result = (await response
+          .json()
+          .catch(() => null)) as {
           error?: string;
         } | null;
 
         throw new Error(
-          result?.error || 'The backup could not be created.',
+          result?.error ||
+            'The backup could not be created.',
         );
       }
 
@@ -700,7 +778,8 @@ export default function AdminUpload() {
       const disposition =
         response.headers.get('content-disposition') || '';
 
-      const match = disposition.match(/filename="?([^"]+)"?/i);
+      const match =
+        disposition.match(/filename="?([^"]+)"?/i);
 
       const filename =
         match?.[1] ||
@@ -718,7 +797,10 @@ export default function AdminUpload() {
       link.click();
       link.remove();
 
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      window.setTimeout(
+        () => URL.revokeObjectURL(url),
+        1000,
+      );
     } catch (error) {
       setMessage({
         type: 'error',
@@ -834,7 +916,7 @@ export default function AdminUpload() {
                   <button
                     key={vault.name}
                     type="button"
-                    onClick={() => setVaultPerson(vault.name)}
+                    onClick={() => chooseVault(vault.name)}
                     className={`rounded-2xl border p-4 text-left ${
                       vaultPerson === vault.name
                         ? 'border-[#b57931] bg-[#f4e7cf]'
@@ -862,7 +944,9 @@ export default function AdminUpload() {
               <input
                 required
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={(event) =>
+                  setTitle(event.target.value)
+                }
                 placeholder="Example: How Dad Met Mom"
                 className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
               />
@@ -880,7 +964,9 @@ export default function AdminUpload() {
                 <input
                   required
                   value={speaker}
-                  onChange={(event) => setSpeaker(event.target.value)}
+                  onChange={(event) =>
+                    setSpeaker(event.target.value)
+                  }
                   placeholder="Example: Dad and Dan"
                   className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
                 />
@@ -896,7 +982,9 @@ export default function AdminUpload() {
 
                 <select
                   value={category}
-                  onChange={(event) => setCategory(event.target.value)}
+                  onChange={(event) =>
+                    setCategory(event.target.value)
+                  }
                   className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
                 >
                   <option>General</option>
@@ -920,14 +1008,22 @@ export default function AdminUpload() {
 
               <select
                 value={questionId}
-                onChange={(event) => setQuestionId(event.target.value)}
+                onChange={(event) =>
+                  setQuestionId(event.target.value)
+                }
                 className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
               >
-                <option value="">Not linked to a question</option>
+                <option value="">
+                  Not linked to a question
+                </option>
 
                 {questions.map((question) => (
-                  <option key={question.id} value={question.id}>
-                    {question.question_number}. {question.question_text}
+                  <option
+                    key={question.id}
+                    value={question.id}
+                  >
+                    {question.question_number}.{' '}
+                    {question.question_text}
                   </option>
                 ))}
               </select>
@@ -955,7 +1051,9 @@ export default function AdminUpload() {
               {file && (
                 <p className="mt-2 text-sm text-stone-600">
                   Ready to upload:{' '}
-                  <span className="font-medium">{file.name}</span>
+                  <span className="font-medium">
+                    {file.name}
+                  </span>
                 </p>
               )}
             </div>
@@ -998,7 +1096,9 @@ export default function AdminUpload() {
 
           <button
             type="button"
-            onClick={() => void downloadFullVaultBackup()}
+            onClick={() =>
+              void downloadFullVaultBackup()
+            }
             disabled={backingUp}
             className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3 font-semibold text-white disabled:bg-stone-400"
           >
@@ -1022,13 +1122,22 @@ export default function AdminUpload() {
               </p>
 
               <h2 className="mt-2 font-serif text-3xl text-stone-900">
-                Transcripts & family stories
+                {vaultPerson === 'Mom'
+                  ? 'Mom / Ivy'
+                  : vaultPerson}{' '}
+                Transcripts & Stories
               </h2>
+
+              <p className="mt-2 text-sm text-stone-600">
+                Only recordings from this Vault are shown here.
+              </p>
             </div>
 
             <button
               type="button"
-              onClick={() => void fetchTracks(selectedTrackId)}
+              onClick={() =>
+                void fetchTracks(selectedTrackId)
+              }
               className="inline-flex w-fit items-center gap-2 rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
             >
               <RefreshCw
@@ -1058,10 +1167,13 @@ export default function AdminUpload() {
             </div>
           )}
 
-          {!tracks.length && !loadingTracks ? (
+          {!visibleTracks.length && !loadingTracks ? (
             <p className="mt-6 rounded-xl bg-stone-100 p-4 text-sm text-stone-600">
-              Upload your first recording above, then it will appear
-              here.
+              No recordings have been added to{' '}
+              {vaultPerson === 'Mom'
+                ? 'Mom / Ivy'
+                : vaultPerson}
+              &apos;s Vault yet.
             </p>
           ) : (
             <div className="mt-6 space-y-6">
@@ -1072,13 +1184,20 @@ export default function AdminUpload() {
 
                 <select
                   value={selectedTrackId}
-                  onChange={(event) => chooseTrack(event.target.value)}
+                  onChange={(event) =>
+                    chooseTrack(event.target.value)
+                  }
                   className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
                 >
-                  {tracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {track.vault_person} · {track.title} ·{' '}
-                      {new Date(track.created_at).toLocaleDateString()}
+                  {visibleTracks.map((track) => (
+                    <option
+                      key={track.id}
+                      value={track.id}
+                    >
+                      {track.title} ·{' '}
+                      {new Date(
+                        track.created_at,
+                      ).toLocaleDateString()}
                     </option>
                   ))}
                 </select>
@@ -1090,20 +1209,23 @@ export default function AdminUpload() {
                     <span className="font-semibold text-stone-800">
                       {selectedTrack.speaker}
                     </span>{' '}
-                    · {selectedTrack.category || 'General'} · Transcript:{' '}
+                    · {selectedTrack.category || 'General'} ·
+                    Transcript:{' '}
                     <span className="font-medium">
                       {selectedTrack.transcription_status ||
                         'not started'}
                     </span>{' '}
                     · Story:{' '}
                     <span className="font-medium">
-                      {selectedTrack.story_status || 'not started'}
+                      {selectedTrack.story_status ||
+                        'not started'}
                     </span>
                   </div>
 
                   <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
                     <div className="mb-3 flex items-center gap-2">
                       <Headphones className="h-4 w-4 text-[#a66b27]" />
+
                       <p className="text-sm font-semibold">
                         Listen while you work
                       </p>
@@ -1128,8 +1250,12 @@ export default function AdminUpload() {
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => void copyTranscript()}
-                          disabled={!transcriptDraft.trim()}
+                          onClick={() =>
+                            void copyTranscript()
+                          }
+                          disabled={
+                            !transcriptDraft.trim()
+                          }
                           className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-50"
                         >
                           <Copy className="h-4 w-4" />
@@ -1162,7 +1288,9 @@ export default function AdminUpload() {
 
                         <button
                           type="button"
-                          onClick={() => void reTranscribe()}
+                          onClick={() =>
+                            void reTranscribe()
+                          }
                           disabled={
                             reTranscribing ||
                             labelingSpeakers ||
@@ -1187,7 +1315,9 @@ export default function AdminUpload() {
                       rows={12}
                       value={transcriptDraft}
                       onChange={(event) =>
-                        setTranscriptDraft(event.target.value)
+                        setTranscriptDraft(
+                          event.target.value,
+                        )
                       }
                       placeholder="The transcript will appear here."
                       className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
@@ -1202,15 +1332,17 @@ export default function AdminUpload() {
                         </p>
 
                         <p className="mt-1 text-sm text-stone-600">
-                          Create a story from the transcript or improve
-                          the story already saved.
+                          Create a story from the transcript or
+                          improve the story already saved.
                         </p>
                       </div>
 
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => void createStory('create')}
+                          onClick={() =>
+                            void createStory('create')
+                          }
                           disabled={
                             creatingStory ||
                             reTranscribing ||
@@ -1235,7 +1367,9 @@ export default function AdminUpload() {
 
                         <button
                           type="button"
-                          onClick={() => void createStory('improve')}
+                          onClick={() =>
+                            void createStory('improve')
+                          }
                           disabled={
                             creatingStory ||
                             reTranscribing ||
@@ -1258,7 +1392,9 @@ export default function AdminUpload() {
                       <input
                         value={storyTitleDraft}
                         onChange={(event) =>
-                          setStoryTitleDraft(event.target.value)
+                          setStoryTitleDraft(
+                            event.target.value,
+                          )
                         }
                         className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
                       />
@@ -1273,7 +1409,9 @@ export default function AdminUpload() {
                         rows={12}
                         value={storyDraft}
                         onChange={(event) =>
-                          setStoryDraft(event.target.value)
+                          setStoryDraft(
+                            event.target.value,
+                          )
                         }
                         className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 font-serif leading-relaxed"
                       />
@@ -1282,7 +1420,9 @@ export default function AdminUpload() {
 
                   <button
                     type="button"
-                    onClick={() => void saveEditor()}
+                    onClick={() =>
+                      void saveEditor()
+                    }
                     disabled={
                       savingEditor ||
                       creatingStory ||
