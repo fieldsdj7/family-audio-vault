@@ -96,18 +96,26 @@ export async function PATCH(request: Request, context: RouteContext) {
     const assignments: string[] = [];
     const values: Array<string | null> = [];
 
-    if (transcript !== undefined) {
-      assignments.push("transcript = ?");
-      values.push(transcript);
-    }
-    if (storyTitle !== undefined) {
-      assignments.push("story_title = ?");
-      values.push(storyTitle);
-    }
-    if (storyChapter !== undefined) {
-      assignments.push("story_chapter = ?");
-      values.push(storyChapter);
-    }
+   if (transcript !== undefined) {
+  assignments.push("transcript = ?");
+  values.push(transcript);
+
+  assignments.push("transcription_status = ?");
+  values.push(transcript ? "complete" : "not_started");
+}
+
+if (storyTitle !== undefined) {
+  assignments.push("story_title = ?");
+  values.push(storyTitle);
+}
+
+if (storyChapter !== undefined) {
+  assignments.push("story_chapter = ?");
+  values.push(storyChapter);
+
+  assignments.push("story_status = ?");
+  values.push(storyChapter ? "complete" : "not_started");
+}
 
     assignments.push("updated_at = datetime('now')");
     await db
