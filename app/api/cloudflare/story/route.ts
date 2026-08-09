@@ -139,7 +139,7 @@ export async function POST(request: Request) {
             "Do not hide uncertainty: retain bracketed unclear words exactly as written.",
             "Write 2 to 6 short, warm book-ready paragraphs. Do not include a heading in the story text.",
             "Return valid JSON only, with exactly two string fields: title and story.",
-            "The title should be specific, warm, and 3 to 8 words longâ€”not generic and not made-up.",
+            "The title should be specific, warm, and 3 to 8 words long-not generic and not made-up.",
           ].join(" ");
 
     const recordingDetails = [
