@@ -44,6 +44,8 @@ type AudioTrack = {
   story_chapter?: string | null;
   transcription_status?: string | null;
   story_status?: string | null;
+  speaker_1_name?: string | null;
+  speaker_2_name?: string | null;
   storage_path?: string | null;
   source_track_id?: string | null;
   clip_start_seconds?: number | null;
@@ -95,6 +97,8 @@ export default function AdminUpload() {
   const [transcriptDraft, setTranscriptDraft] = useState('');
   const [storyTitleDraft, setStoryTitleDraft] = useState('');
   const [storyDraft, setStoryDraft] = useState('');
+  const [speaker1Name, setSpeaker1Name] = useState('');
+  const [speaker2Name, setSpeaker2Name] = useState('');
 
   const [savingEditor, setSavingEditor] = useState(false);
   const [reTranscribing, setReTranscribing] = useState(false);
@@ -194,6 +198,8 @@ export default function AdminUpload() {
     setTranscriptDraft(track?.transcript || '');
     setStoryTitleDraft(track?.story_title || '');
     setStoryDraft(track?.story_chapter || '');
+    setSpeaker1Name(track?.speaker_1_name || '');
+    setSpeaker2Name(track?.speaker_2_name || '');
   }
 
   async function fetchTracks(preferredId?: string) {
@@ -300,6 +306,33 @@ export default function AdminUpload() {
     window.history.replaceState({}, '', url);
   }
 
+  async function saveSpeakerNames(trackId: string) {
+    const response = await fetch(
+      `/api/cloudflare/recordings/${trackId}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          speaker1Name,
+          speaker2Name,
+        }),
+      },
+    );
+
+    const result = (await response.json()) as {
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(
+        result.error ||
+          'The speaker names could not be saved.',
+      );
+    }
+  }
+
   async function saveEditor() {
     if (!selectedTrack) return;
 
@@ -318,6 +351,8 @@ export default function AdminUpload() {
             transcript: transcriptDraft,
             storyTitle: storyTitleDraft,
             storyChapter: storyDraft,
+            speaker1Name,
+            speaker2Name,
           }),
         },
       );
@@ -335,7 +370,8 @@ export default function AdminUpload() {
 
       setEditorMessage({
         type: 'success',
-        text: 'Your transcript and story changes were saved.',
+        text:
+          'Speaker names, transcript, and story changes were saved.',
       });
 
       await fetchTracks(selectedTrack.id);
@@ -373,7 +409,7 @@ export default function AdminUpload() {
 
   async function requestSpeakerLabels(
     trackId: string,
-    transcript?: string,
+    transcript: string,
   ) {
     const response = await fetch(
       '/api/cloudflare/label-speakers',
@@ -385,6 +421,8 @@ export default function AdminUpload() {
         body: JSON.stringify({
           trackId,
           transcript,
+          speaker1Name: speaker1Name.trim(),
+          speaker2Name: speaker2Name.trim(),
         }),
       },
     );
@@ -398,7 +436,7 @@ export default function AdminUpload() {
     if (!response.ok || !result.transcript) {
       throw new Error(
         result.error ||
-          'The speakers could not be labeled.',
+          'The transcript could not be formatted and labeled.',
       );
     }
 
@@ -439,63 +477,17 @@ export default function AdminUpload() {
         );
       }
 
-      /*
-       * Show the completed transcript immediately.
-       * Do not wait for speaker labeling first.
-       */
       if (result.transcript?.trim()) {
         setTranscriptDraft(result.transcript);
       }
 
       await fetchTracks(trackId);
 
-      setReTranscribing(false);
-
       setEditorMessage({
         type: 'success',
         text:
-          'The word-for-word transcript is complete. Speaker labeling is being checked now.',
+          'The word-for-word transcript is complete. Confirm Speaker 1 and Speaker 2, then click Format & Label Transcript.',
       });
-
-      /*
-       * Speaker labeling is a separate second step.
-       * The transcript is already visible and saved.
-       */
-      if (result.transcript?.trim()) {
-        setLabelingSpeakers(true);
-
-        try {
-          const labeled =
-            await requestSpeakerLabels(
-              trackId,
-              result.transcript,
-            );
-
-          if (labeled.transcript?.trim()) {
-            setTranscriptDraft(
-              labeled.transcript,
-            );
-          }
-
-          await fetchTracks(trackId);
-
-          setEditorMessage({
-            type: 'success',
-            text:
-              `Transcript complete and separated into ${
-                labeled.speakerCount || 2
-              } speakers.`,
-          });
-        } catch {
-          setEditorMessage({
-            type: 'success',
-            text:
-              'The word-for-word transcript is complete. Automatic speaker labeling did not finish, but the transcript is safely saved.',
-          });
-        } finally {
-          setLabelingSpeakers(false);
-        }
-      }
     } catch (error) {
       setEditorMessage({
         type: 'error',
@@ -512,10 +504,25 @@ export default function AdminUpload() {
   async function labelExistingTranscript() {
     if (!selectedTrack || !transcriptDraft.trim()) return;
 
+    if (!speaker1Name.trim() || !speaker2Name.trim()) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          'Enter the names for Speaker 1 and Speaker 2 before formatting the transcript.',
+      });
+      return;
+    }
+
     setLabelingSpeakers(true);
     setEditorMessage(null);
 
     try {
+      /*
+       * Save the names first so they permanently belong
+       * to this recording.
+       */
+      await saveSpeakerNames(selectedTrack.id);
+
       const result = await requestSpeakerLabels(
         selectedTrack.id,
         transcriptDraft,
@@ -523,22 +530,20 @@ export default function AdminUpload() {
 
       setTranscriptDraft(result.transcript || '');
 
+      await fetchTracks(selectedTrack.id);
+
       setEditorMessage({
         type: 'success',
         text:
-          `The transcript was separated into ${
-            result.speakerCount || 2
-          } speakers without changing its words.`,
+          `Transcript formatted and labeled as ${speaker1Name.trim()} and ${speaker2Name.trim()} without changing the spoken words.`,
       });
-
-      await fetchTracks(selectedTrack.id);
     } catch (error) {
       setEditorMessage({
         type: 'error',
         text:
           error instanceof Error
             ? error.message
-            : 'The speakers could not be labeled.',
+            : 'The transcript could not be formatted and labeled.',
       });
     } finally {
       setLabelingSpeakers(false);
@@ -579,6 +584,8 @@ export default function AdminUpload() {
           },
           body: JSON.stringify({
             transcript: transcriptDraft,
+            speaker1Name,
+            speaker2Name,
           }),
         },
       );
@@ -746,45 +753,13 @@ export default function AdminUpload() {
         return;
       }
 
-      /*
-       * Refresh immediately so the new transcript appears
-       * before optional speaker labeling.
-       */
       await fetchTracks(newTrackId);
-      setTranscribing(false);
 
       setMessage({
         type: 'success',
         text:
-          `Saved to ${vaultPerson}'s Vault. Transcript complete.`,
+          `Saved to ${vaultPerson}'s Vault and transcribed. Enter Speaker 1 and Speaker 2 in Story Studio to format and label the transcript.`,
       });
-
-      if (transcriptionResult.transcript?.trim()) {
-        setLabelingSpeakers(true);
-
-        try {
-          await requestSpeakerLabels(
-            newTrackId,
-            transcriptionResult.transcript,
-          );
-
-          await fetchTracks(newTrackId);
-
-          setMessage({
-            type: 'success',
-            text:
-              `Saved to ${vaultPerson}'s Vault, transcribed, and speaker labels added.`,
-          });
-        } catch {
-          setMessage({
-            type: 'success',
-            text:
-              `Saved to ${vaultPerson}'s Vault and transcribed. Automatic speaker labeling did not finish, but the transcript is safely saved.`,
-          });
-        } finally {
-          setLabelingSpeakers(false);
-        }
-      }
 
       setTitle('');
       setSpeaker('');
@@ -1295,6 +1270,58 @@ export default function AdminUpload() {
                     />
                   </div>
 
+                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                    <div className="flex items-center gap-2">
+                      <UserRound className="h-4 w-4 text-[#a66b27]" />
+
+                      <p className="text-sm font-semibold">
+                        Who is speaking?
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-sm text-stone-600">
+                      Enter the actual names used in this recording.
+                      These names are remembered for this recording only.
+                    </p>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-sm font-semibold">
+                          Speaker 1
+                        </label>
+
+                        <input
+                          value={speaker1Name}
+                          onChange={(event) =>
+                            setSpeaker1Name(event.target.value)
+                          }
+                          placeholder="Example: Dan"
+                          className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1.5 block text-sm font-semibold">
+                          Speaker 2
+                        </label>
+
+                        <input
+                          value={speaker2Name}
+                          onChange={(event) =>
+                            setSpeaker2Name(event.target.value)
+                          }
+                          placeholder="Example: Bill"
+                          className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                        />
+                      </div>
+                    </div>
+
+                    <p className="mt-3 text-xs text-stone-500">
+                      If somebody else asks the questions on another
+                      recording, just enter their name for that recording.
+                    </p>
+                  </div>
+
                   <div>
                     <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <label className="text-sm font-semibold">
@@ -1325,9 +1352,11 @@ export default function AdminUpload() {
                             labelingSpeakers ||
                             reTranscribing ||
                             creatingStory ||
-                            !transcriptDraft.trim()
+                            !transcriptDraft.trim() ||
+                            !speaker1Name.trim() ||
+                            !speaker2Name.trim()
                           }
-                          className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-50"
+                          className="inline-flex items-center gap-2 rounded-lg bg-[#80542a] px-3 py-2 text-sm font-semibold text-white disabled:bg-stone-400"
                         >
                           {labelingSpeakers ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1336,8 +1365,8 @@ export default function AdminUpload() {
                           )}
 
                           {labelingSpeakers
-                            ? 'Labeling…'
-                            : 'Label speakers'}
+                            ? 'Formatting & labeling…'
+                            : 'Format & Label Transcript'}
                         </button>
 
                         <button
@@ -1482,7 +1511,8 @@ export default function AdminUpload() {
                     disabled={
                       savingEditor ||
                       creatingStory ||
-                      reTranscribing
+                      reTranscribing ||
+                      labelingSpeakers
                     }
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-4 py-3.5 font-semibold text-white disabled:bg-stone-400"
                   >
@@ -1494,7 +1524,7 @@ export default function AdminUpload() {
 
                     {savingEditor
                       ? 'Saving changes…'
-                      : 'Save transcript and story changes'}
+                      : 'Save speaker names, transcript and story'}
                   </button>
                 </>
               )}
