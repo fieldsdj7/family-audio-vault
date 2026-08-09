@@ -19,6 +19,8 @@ type RecordingRow = {
   story_title: string | null;
   story_chapter: string | null;
   story_status: string;
+  speaker_1_name: string | null;
+  speaker_2_name: string | null;
   source_track_id: string | null;
   clip_start_seconds: number | null;
   clip_end_seconds: number | null;
@@ -26,27 +28,56 @@ type RecordingRow = {
   updated_at: string;
 };
 
-function isVaultPerson(value: string | null): value is VaultPerson {
-  return value === "Papa" || value === "Dad" || value === "Mom";
+function isVaultPerson(
+  value: string | null,
+): value is VaultPerson {
+  return (
+    value === "Papa" ||
+    value === "Dad" ||
+    value === "Mom"
+  );
 }
 
-export async function GET(request: Request) {
+export async function GET(
+  request: Request,
+) {
   try {
-    const member = await requireVaultMember(request);
-    const requestedVault = new URL(request.url).searchParams.get("vault");
-    let vaults = member.allowedVaults;
+    const member =
+      await requireVaultMember(request);
+
+    const requestedVault =
+      new URL(request.url).searchParams.get(
+        "vault",
+      );
+
+    let vaults =
+      member.allowedVaults;
 
     if (requestedVault !== null) {
-      if (!isVaultPerson(requestedVault)) {
+      if (
+        !isVaultPerson(
+          requestedVault,
+        )
+      ) {
         return Response.json(
-          { error: "That vault name is not valid." },
+          {
+            error:
+              "That vault name is not valid.",
+          },
           { status: 400 },
         );
       }
 
-      if (!member.allowedVaults.includes(requestedVault)) {
+      if (
+        !member.allowedVaults.includes(
+          requestedVault,
+        )
+      ) {
         return Response.json(
-          { error: "You do not have access to that vault." },
+          {
+            error:
+              "You do not have access to that vault.",
+          },
           { status: 403 },
         );
       }
@@ -55,11 +86,19 @@ export async function GET(request: Request) {
     }
 
     if (vaults.length === 0) {
-      return Response.json({ recordings: [] });
+      return Response.json({
+        recordings: [],
+      });
     }
 
-    const placeholders = vaults.map(() => "?").join(", ");
-    const { db } = await getVaultBindings();
+    const placeholders =
+      vaults
+        .map(() => "?")
+        .join(", ");
+
+    const { db } =
+      await getVaultBindings();
+
     const recordings = await db
       .prepare(
         `SELECT
@@ -76,6 +115,8 @@ export async function GET(request: Request) {
            tracks.story_title,
            tracks.story_chapter,
            tracks.story_status,
+           tracks.speaker_1_name,
+           tracks.speaker_2_name,
            tracks.source_track_id,
            tracks.clip_start_seconds,
            tracks.clip_end_seconds,
@@ -92,8 +133,13 @@ export async function GET(request: Request) {
       .bind(...vaults)
       .all<RecordingRow>();
 
-    return Response.json({ recordings: recordings.results });
+    return Response.json({
+      recordings:
+        recordings.results,
+    });
   } catch (error) {
-    return vaultAccessResponse(error);
+    return vaultAccessResponse(
+      error,
+    );
   }
 }
