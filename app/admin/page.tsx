@@ -123,6 +123,7 @@ export default function AdminUpload() {
   const [storyDraft, setStoryDraft] = useState('');
   const [speaker1Name, setSpeaker1Name] = useState('');
   const [speaker2Name, setSpeaker2Name] = useState('');
+  const [editorQuestionId, setEditorQuestionId] = useState('');
 
   const [savingEditor, setSavingEditor] = useState(false);
   const [reTranscribing, setReTranscribing] = useState(false);
@@ -222,6 +223,7 @@ export default function AdminUpload() {
     setStoryDraft(track?.story_chapter || '');
     setSpeaker1Name(track?.speaker_1_name || '');
     setSpeaker2Name(track?.speaker_2_name || '');
+    setEditorQuestionId(track?.question_id || '');
   }
 
   async function fetchTracks(preferredId?: string) {
@@ -375,6 +377,7 @@ export default function AdminUpload() {
             storyChapter: storyDraft,
             speaker1Name,
             speaker2Name,
+            questionId: editorQuestionId,
           }),
         },
       );
@@ -393,7 +396,7 @@ export default function AdminUpload() {
       setEditorMessage({
         type: 'success',
         text:
-          'Speaker names, transcript, and story changes were saved.',
+          'Story Question, speaker names, transcript, and story changes were saved.',
       });
 
       await fetchTracks(selectedTrack.id);
@@ -1209,6 +1212,42 @@ export default function AdminUpload() {
                       src={`/api/cloudflare/audio/${selectedTrack.id}`}
                       className="w-full"
                     />
+                  </div>
+
+                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="h-4 w-4 text-[#a66b27]" />
+
+                      <p className="text-sm font-semibold">
+                        Story Question
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-sm text-stone-600">
+                      Link this existing recording to the question it answers.
+                    </p>
+
+                    <select
+                      value={editorQuestionId}
+                      onChange={(event) =>
+                        setEditorQuestionId(event.target.value)
+                      }
+                      className="mt-4 w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                    >
+                      <option value="">
+                        Not linked to a question
+                      </option>
+
+                      {questions.map((question) => (
+                        <option
+                          key={question.id}
+                          value={question.id}
+                        >
+                          {question.question_number}.{' '}
+                          {question.question_text}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
