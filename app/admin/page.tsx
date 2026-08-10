@@ -60,12 +60,36 @@ type Question = {
 
 const vaults: {
   name: VaultPerson;
+  displayName: string;
   title: string;
 }[] = [
-  { name: 'Papa', title: "Papa's Life" },
-  { name: 'Dad', title: "Dad's Life" },
-  { name: 'Mom', title: "Mom's Life" },
+  {
+    name: 'Papa',
+    displayName: 'Papa — Bill',
+    title: "Papa's Life",
+  },
+  {
+    name: 'Dad',
+    displayName: 'Dad — Dan',
+    title: "Dad's Life",
+  },
+  {
+    name: 'Mom',
+    displayName: 'Mom — Ivy',
+    title: "Mom's Life",
+  },
 ];
+
+function vaultDisplayName(
+  person: VaultPerson,
+) {
+  return (
+    vaults.find(
+      (vault) =>
+        vault.name === person,
+    )?.displayName || person
+  );
+}
 
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
@@ -113,8 +137,6 @@ export default function AdminUpload() {
     type: 'success' | 'error';
     text: string;
   } | null>(null);
-
-  const [backingUp, setBackingUp] = useState(false);
 
   const editorAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -517,10 +539,6 @@ export default function AdminUpload() {
     setEditorMessage(null);
 
     try {
-      /*
-       * Save the names first so they permanently belong
-       * to this recording.
-       */
       await saveSpeakerNames(selectedTrack.id);
 
       const result = await requestSpeakerLabels(
@@ -758,7 +776,9 @@ export default function AdminUpload() {
       setMessage({
         type: 'success',
         text:
-          `Saved to ${vaultPerson}'s Vault and transcribed. Enter Speaker 1 and Speaker 2 in Story Studio to format and label the transcript.`,
+          `Saved to the ${vaultDisplayName(
+            vaultPerson,
+          )} Vault and transcribed. Enter Speaker 1 and Speaker 2 in Story Studio to format and label the transcript.`,
       });
 
       setTitle('');
@@ -778,68 +798,6 @@ export default function AdminUpload() {
     } finally {
       setUploading(false);
       setTranscribing(false);
-    }
-  }
-
-  async function downloadFullVaultBackup() {
-    setBackingUp(true);
-
-    try {
-      const response = await fetch(
-        '/api/cloudflare/backup',
-      );
-
-      if (!response.ok) {
-        const result = (await response
-          .json()
-          .catch(() => null)) as {
-          error?: string;
-        } | null;
-
-        throw new Error(
-          result?.error ||
-            'The backup could not be created.',
-        );
-      }
-
-      const blob = await response.blob();
-
-      const disposition =
-        response.headers.get('content-disposition') || '';
-
-      const match =
-        disposition.match(/filename="?([^"]+)"?/i);
-
-      const filename =
-        match?.[1] ||
-        `fields-family-vault-backup-${new Date()
-          .toISOString()
-          .slice(0, 10)}.zip`;
-
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-
-      link.href = url;
-      link.download = filename;
-
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      window.setTimeout(
-        () => URL.revokeObjectURL(url),
-        1000,
-      );
-    } catch (error) {
-      setMessage({
-        type: 'error',
-        text:
-          error instanceof Error
-            ? error.message
-            : 'The backup could not be created.',
-      });
-    } finally {
-      setBackingUp(false);
     }
   }
 
@@ -954,7 +912,7 @@ export default function AdminUpload() {
                   >
                     <span className="flex items-center gap-2 font-serif text-lg">
                       <Headphones className="h-4 w-4 text-[#a66b27]" />
-                      {vault.name}
+                      {vault.displayName}
                     </span>
 
                     <span className="mt-1 block text-xs text-stone-600">
@@ -996,7 +954,7 @@ export default function AdminUpload() {
                   onChange={(event) =>
                     setSpeaker(event.target.value)
                   }
-                  placeholder="Example: Dad and Dan"
+                  placeholder="Example: Dan and Bill"
                   className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
                 />
               </div>
@@ -1102,7 +1060,7 @@ export default function AdminUpload() {
               ) : (
                 <>
                   <Upload className="h-5 w-5" />
-                  Save to {vaultPerson}&apos;s Vault
+                  Save to {vaultDisplayName(vaultPerson)} Vault
                 </>
               )}
             </button>
@@ -1115,32 +1073,21 @@ export default function AdminUpload() {
           </p>
 
           <h2 className="mt-2 font-serif text-3xl text-stone-900">
-            Download Full Vault Backup
+            Full Vault Backup
           </h2>
 
           <p className="mt-2 text-sm text-stone-600">
-            Creates one ZIP containing the original audio,
-            transcripts, stories, and Vault metadata.
+            Full backups are created from Vault Health & Backups,
+            where the collection and storage can also be checked first.
           </p>
 
-          <button
-            type="button"
-            onClick={() =>
-              void downloadFullVaultBackup()
-            }
-            disabled={backingUp}
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3 font-semibold text-white disabled:bg-stone-400"
+          <a
+            href="/project-tools/vault-health"
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3 font-semibold text-white"
           >
-            {backingUp ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Download className="h-5 w-5" />
-            )}
-
-            {backingUp
-              ? 'Creating backup…'
-              : 'Download Full Vault Backup'}
-          </button>
+            <Download className="h-5 w-5" />
+            Open Vault Health & Backups
+          </a>
         </section>
 
         <section className="mt-10 rounded-3xl border border-stone-300 bg-[#fffaf0] p-6 shadow-sm md:p-8">
@@ -1151,10 +1098,7 @@ export default function AdminUpload() {
               </p>
 
               <h2 className="mt-2 font-serif text-3xl text-stone-900">
-                {vaultPerson === 'Mom'
-                  ? 'Mom / Ivy'
-                  : vaultPerson}{' '}
-                Transcripts & Stories
+                {vaultDisplayName(vaultPerson)} Transcripts & Stories
               </h2>
 
               <p className="mt-2 text-sm text-stone-600">
@@ -1198,11 +1142,8 @@ export default function AdminUpload() {
 
           {!visibleTracks.length && !loadingTracks ? (
             <p className="mt-6 rounded-xl bg-stone-100 p-4 text-sm text-stone-600">
-              No recordings have been added to{' '}
-              {vaultPerson === 'Mom'
-                ? 'Mom / Ivy'
-                : vaultPerson}
-              &apos;s Vault yet.
+              No recordings have been added to the{' '}
+              {vaultDisplayName(vaultPerson)} Vault yet.
             </p>
           ) : (
             <div className="mt-6 space-y-6">
