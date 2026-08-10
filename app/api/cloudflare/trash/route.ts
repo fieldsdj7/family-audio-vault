@@ -21,6 +21,7 @@ type RecordingRow = {
   story_chapter: string | null;
   created_at: string;
   trashed_at: string | null;
+  source_track_id: string | null;
 };
 
 type PhotoRow = {
@@ -97,7 +98,8 @@ export async function GET(
              transcript,
              story_chapter,
              created_at,
-             trashed_at
+             trashed_at,
+             source_track_id
            FROM audio_tracks
            WHERE trashed_at IS NOT NULL
            ORDER BY trashed_at DESC`,
@@ -197,7 +199,8 @@ export async function POST(
              transcript,
              story_chapter,
              created_at,
-             trashed_at
+             trashed_at,
+             source_track_id
            FROM audio_tracks
            WHERE id = ?`,
         )
@@ -369,6 +372,9 @@ export async function POST(
       );
     }
 
+    const originalSourceId =
+      recording.source_track_id;
+
     await db
       .prepare(
         `DELETE FROM audio_tracks
@@ -379,10 +385,45 @@ export async function POST(
       )
       .run();
 
+    if (originalSourceId) {
+      const remainingSplit =
+        await db
+          .prepare(
+            `SELECT id
+             FROM audio_tracks
+             WHERE source_track_id = ?
+             LIMIT 1`,
+          )
+          .bind(
+            originalSourceId,
+          )
+          .first<{
+            id: string;
+          }>();
+
+      if (!remainingSplit) {
+        await db
+          .prepare(
+            `UPDATE audio_tracks
+             SET is_split_master = 0,
+                 updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+          .bind(
+            originalSourceId,
+          )
+          .run();
+      }
+    }
+
     return Response.json({
       permanentlyDeleted:
         true,
       success: true,
+      originalRestored:
+        Boolean(
+          originalSourceId,
+        ),
     });
   } catch (error) {
     return vaultAccessResponse(
