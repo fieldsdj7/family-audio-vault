@@ -35,7 +35,8 @@ interface AudioTrack {
   category: string | null;
   vault_person: VaultName;
   created_at: string;
-
+  question_number?: number | null;
+  question_text?: string | null;
   transcript?: string | null;
 
   story_chapter?: string | null;
@@ -1397,15 +1398,11 @@ export default function Home() {
                           : "border-stone-300 bg-[#fffaf0] hover:border-[#b57931] hover:shadow-sm"
                       }`}
                     >
-                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#e8d4ae] font-serif text-lg text-[#76502a]">
-                        {String(
-                          index +
-                            1,
-                        ).padStart(
-                          2,
-                          "0",
-                        )}
-                      </span>
+                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#e8d4ae] font-serif text-sm text-[#76502a]">
+  {track.question_number
+    ? `Q${track.question_number}`
+    : String(index + 1).padStart(2, "0")}
+</span>
 
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-serif text-xl text-stone-900">
