@@ -58,15 +58,12 @@ const readyCards: ToolCard[] = [
       'Check recording and storage health, see backup history, and download a complete Vault backup.',
     icon: Gauge,
   },
-];
-
-const upcomingCards = [
   {
+    href: '/project-tools/book-builder',
     title: 'Book Builder',
     description:
-      'Organize finished stories into chapters, review the book outline, and create a printable family history book.',
+      'Organize finished stories into chapters, review the book outline, and prepare the family history book.',
     icon: BookOpen,
-    status: 'Planned',
   },
 ];
 
@@ -119,7 +116,7 @@ export default function ProjectToolsPage() {
 
   if (!isAdmin) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800">
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5">
         <div className="w-full max-w-md rounded-3xl border border-stone-300 bg-[#fffaf0] p-8 text-center shadow-xl">
           <ShieldCheck className="mx-auto h-10 w-10 text-[#a66b27]" />
 
@@ -164,7 +161,7 @@ export default function ProjectToolsPage() {
 
           <p className="mt-3 max-w-2xl text-stone-600">
             Your private control center for organizing, protecting,
-            and eventually turning the family memories into a book.
+            and turning the family memories into a book.
             The family-facing Vault stays simple.
           </p>
         </header>
@@ -210,45 +207,6 @@ export default function ProjectToolsPage() {
                     </div>
                   </div>
                 </a>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="mt-9">
-          <h2 className="font-serif text-2xl text-stone-900">
-            Coming later
-          </h2>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {upcomingCards.map((tool) => {
-              const Icon = tool.icon;
-
-              return (
-                <div
-                  key={tool.title}
-                  className="rounded-2xl border border-stone-300 bg-[#fffaf0] p-5 opacity-75"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="rounded-xl bg-stone-100 p-3">
-                      <Icon className="h-6 w-6 text-stone-500" />
-                    </div>
-
-                    <div>
-                      <span className="rounded-full bg-stone-200 px-2.5 py-1 text-xs font-semibold text-stone-600">
-                        {tool.status}
-                      </span>
-
-                      <h3 className="mt-3 font-serif text-xl text-stone-900">
-                        {tool.title}
-                      </h3>
-
-                      <p className="mt-2 text-sm leading-relaxed text-stone-600">
-                        {tool.description}
-                      </p>
-                    </div>
-                  </div>
-                </div>
               );
             })}
           </div>
