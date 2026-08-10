@@ -43,6 +43,13 @@ type PhotoRow = {
   updated_at: string;
 };
 
+type BackupRecordRequest = {
+  recordingCount?: number;
+  audioFileCount?: number;
+  missingAudioCount?: number;
+  backupSizeBytes?: number;
+};
+
 export async function GET(request: Request) {
   try {
     const member = await requireVaultMember(request);
@@ -180,6 +187,89 @@ export async function GET(request: Request) {
         audio: audioFiles,
         photos: photoFiles,
       },
+    });
+  } catch (error) {
+    return vaultAccessResponse(error);
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const member = await requireVaultMember(request);
+
+    if (!member.isAdmin) {
+      return Response.json(
+        {
+          error:
+            "Only a Vault administrator can record a full backup.",
+        },
+        { status: 403 },
+      );
+    }
+
+    const body =
+      (await request.json()) as BackupRecordRequest;
+
+    const recordingCount =
+      Number(body.recordingCount);
+
+    const audioFileCount =
+      Number(body.audioFileCount);
+
+    const missingAudioCount =
+      Number(body.missingAudioCount);
+
+    const backupSizeBytes =
+      Number(body.backupSizeBytes);
+
+    if (
+      !Number.isFinite(recordingCount) ||
+      !Number.isFinite(audioFileCount) ||
+      !Number.isFinite(missingAudioCount) ||
+      !Number.isFinite(backupSizeBytes) ||
+      recordingCount < 0 ||
+      audioFileCount < 0 ||
+      missingAudioCount < 0 ||
+      backupSizeBytes <= 0
+    ) {
+      return Response.json(
+        {
+          error:
+            "The backup details were incomplete or invalid.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const { db } =
+      await getVaultBindings();
+
+    const result =
+      await db
+        .prepare(
+          `INSERT INTO vault_backup_history (
+             created_by,
+             recording_count,
+             audio_file_count,
+             missing_audio_count,
+             backup_size_bytes
+           )
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          member.email,
+          Math.floor(recordingCount),
+          Math.floor(audioFileCount),
+          Math.floor(missingAudioCount),
+          Math.floor(backupSizeBytes),
+        )
+        .run();
+
+    return Response.json({
+      success: true,
+      backupId:
+        result.meta.last_row_id ??
+        null,
     });
   } catch (error) {
     return vaultAccessResponse(error);
