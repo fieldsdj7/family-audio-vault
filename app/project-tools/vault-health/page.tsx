@@ -184,6 +184,26 @@ function safeFilePart(value: string) {
     .slice(0, 90);
 }
 
+function vaultFolderName(
+  person: string | null | undefined,
+) {
+  if (person === 'Papa') {
+    return 'Papa - Bill';
+  }
+
+  if (person === 'Dad') {
+    return 'Dad - Dan';
+  }
+
+  if (person === 'Mom') {
+    return 'Mom - Ivy';
+  }
+
+  return safeFilePart(
+    person || 'Unknown',
+  );
+}
+
 function fileExtension(
   path: string,
   fallback = 'audio',
@@ -545,16 +565,22 @@ export default function VaultHealthPage() {
           'WHAT IS INCLUDED',
           '',
           'audio/',
-          '  Original audio files stored in the Vault.',
+          '  Original audio files organized by family member.',
           '',
           'transcripts/',
-          '  Readable word-for-word transcript files.',
+          '  Readable word-for-word transcript files organized by family member.',
           '',
           'stories/',
-          '  Readable family-story files.',
+          '  Readable family-story files organized by family member.',
           '',
           'metadata/',
           '  Complete database information in JSON format.',
+          '',
+          'FAMILY MEMBER LABELS',
+          '',
+          'Papa - Bill',
+          'Dad - Dan',
+          'Mom - Ivy',
           '',
           'Nothing in the live Vault was removed or changed by creating this backup.',
         ].join('\n'),
@@ -674,9 +700,14 @@ export default function VaultHealthPage() {
             track.title,
           )}`;
 
+        const vaultFolder =
+          vaultFolderName(
+            track.vault_person,
+          );
+
         addTextFile(
           zip,
-          `transcripts/${baseName}.txt`,
+          `transcripts/${vaultFolder}/${baseName}.txt`,
           [
             `Title: ${track.title}`,
             `Vault: ${track.vault_person}`,
@@ -726,7 +757,7 @@ export default function VaultHealthPage() {
         ) {
           addTextFile(
             zip,
-            `stories/${baseName}.txt`,
+            `stories/${vaultFolder}/${baseName}.txt`,
             [
               `Title: ${
                 track.story_title ||
@@ -776,6 +807,19 @@ export default function VaultHealthPage() {
           file.storagePath,
         );
 
+        const fileTrack =
+          tracks.find(
+            (track) =>
+              track.id ===
+              file.trackId,
+          );
+
+        const audioVaultFolder =
+          vaultFolderName(
+            fileTrack
+              ?.vault_person,
+          );
+
         setBackupProgress(
           `Downloading audio ${
             index + 1
@@ -820,7 +864,7 @@ export default function VaultHealthPage() {
 
         await addResponseToZip(
           zip,
-          `audio/${audioName}`,
+          `audio/${audioVaultFolder}/${audioName}`,
           response,
         );
 
