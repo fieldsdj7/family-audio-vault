@@ -1,31 +1,35 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+
   "name": "family-audio-vault",
+
   "main": ".open-next/worker.js",
+
   "compatibility_date": "2026-08-08",
+
   "compatibility_flags": [
     "nodejs_compat",
     "global_fetch_strictly_public"
   ],
-  "vars": {
-    "NEXT_PUBLIC_SUPABASE_URL": "https://vdetakeyuhsznfqpldvk.supabase.co"
+
+  "secrets": {
+    "required": [
+      "OPENAI_API_KEY"
+    ]
   },
-"secrets": {
-  "required": [
-    "OPENAI_API_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY"
-  ]
-},
+
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",
       "service": "family-audio-vault"
     }
   ],
+
   "d1_databases": [
     {
       "binding": "DB",
@@ -34,6 +38,7 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
+
   "r2_buckets": [
     {
       "binding": "VAULT_FILES",
