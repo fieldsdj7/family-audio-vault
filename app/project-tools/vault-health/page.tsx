@@ -408,7 +408,6 @@ export default function VaultHealthPage() {
 
   async function loadHealth() {
     setLoading(true);
-    setMessage(null);
 
     try {
       const response =
@@ -453,9 +452,56 @@ export default function VaultHealthPage() {
     }
   }
 
+  async function recordCompletedBackup({
+    recordingCount,
+    audioFileCount,
+    missingAudioCount,
+    backupSizeBytes,
+  }: {
+    recordingCount: number;
+    audioFileCount: number;
+    missingAudioCount: number;
+    backupSizeBytes: number;
+  }) {
+    const response =
+      await fetch(
+        '/api/cloudflare/backup',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            recordingCount,
+            audioFileCount,
+            missingAudioCount,
+            backupSizeBytes,
+          }),
+        },
+      );
+
+    const result =
+      await parseJsonResponse<{
+        success?: boolean;
+        error?: string;
+      }>(response);
+
+    if (
+      !response.ok ||
+      !result.success
+    ) {
+      throw new Error(
+        result.error ||
+          'The backup was created, but its history entry could not be recorded.',
+      );
+    }
+  }
+
   async function downloadBackup() {
     setBackingUp(true);
     setMessage(null);
+
     setBackupProgress(
       'Preparing backup…',
     );
@@ -960,6 +1006,7 @@ export default function VaultHealthPage() {
         );
 
       link.href = url;
+
       link.download =
         `fields-family-vault-backup-${fileDate}.zip`;
 
@@ -978,11 +1025,47 @@ export default function VaultHealthPage() {
         5000,
       );
 
-      setMessage({
-        type: 'success',
-        text:
-          `Full Vault backup created successfully. ${includedAudio} audio files were included.`,
-      });
+      setBackupProgress(
+        'Recording backup history…',
+      );
+
+      let historyRecorded =
+        true;
+
+      try {
+        await recordCompletedBackup({
+          recordingCount:
+            tracks.length,
+
+          audioFileCount:
+            includedAudio,
+
+          missingAudioCount:
+            missingAudio.length,
+
+          backupSizeBytes:
+            blob.size,
+        });
+      } catch {
+        historyRecorded =
+          false;
+      }
+
+      await loadHealth();
+
+      if (historyRecorded) {
+        setMessage({
+          type: 'success',
+          text:
+            `Full Vault backup created successfully. ${includedAudio} audio files were included and the backup was added to Backup History.`,
+        });
+      } else {
+        setMessage({
+          type: 'success',
+          text:
+            `The full Vault backup downloaded successfully with ${includedAudio} audio files, but its Backup History entry could not be recorded.`,
+        });
+      }
     } catch (error) {
       setMessage({
         type: 'error',
@@ -1106,6 +1189,7 @@ export default function VaultHealthPage() {
                   : ''
               }`}
             />
+
             Refresh Health
           </button>
 
@@ -1304,7 +1388,7 @@ export default function VaultHealthPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-stone-600">
-                    Successful recorded backups appear here.
+                    Each successfully completed full backup is recorded here.
                   </p>
                 </div>
               </div>
