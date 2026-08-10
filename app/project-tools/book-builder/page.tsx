@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowLeft,
   BookOpen,
+  Check,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -72,13 +73,6 @@ const vaults: Array<{
   },
 ];
 
-function vaultDisplayName(person: VaultPerson) {
-  return (
-    vaults.find((vault) => vault.name === person)?.displayName ||
-    person
-  );
-}
-
 export default function BookBuilderPage() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -92,7 +86,13 @@ export default function BookBuilderPage() {
   const [summary, setSummary] =
     useState<BookResponse["summary"]>(undefined);
 
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+
+  const [approvingId, setApprovingId] =
+    useState<string | null>(null);
 
   const [openChapters, setOpenChapters] = useState<
     Record<string, boolean>
@@ -122,9 +122,10 @@ export default function BookBuilderPage() {
         };
       };
 
-      const allowed = response.ok && !!data.member?.isAdmin;
-
-      setIsAdmin(allowed);
+      setIsAdmin(
+        response.ok &&
+          !!data.member?.isAdmin,
+      );
     } catch {
       setIsAdmin(false);
     } finally {
@@ -134,7 +135,6 @@ export default function BookBuilderPage() {
 
   async function loadBook(person: VaultPerson) {
     setLoading(true);
-    setMessage("");
 
     try {
       const response = await fetch(
@@ -157,24 +157,87 @@ export default function BookBuilderPage() {
       setOutline(nextOutline);
       setSummary(data.summary);
 
-      const expanded: Record<string, boolean> = {};
+      setOpenChapters((current) => {
+        const expanded = { ...current };
 
-      nextOutline.forEach((chapter) => {
-        expanded[chapter.chapterTitle] = true;
+        nextOutline.forEach((chapter) => {
+          if (
+            expanded[chapter.chapterTitle] === undefined
+          ) {
+            expanded[chapter.chapterTitle] = true;
+          }
+        });
+
+        return expanded;
       });
-
-      setOpenChapters(expanded);
     } catch (error) {
       setOutline([]);
       setSummary(undefined);
 
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "The book could not be loaded.",
-      );
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "The book could not be loaded.",
+      });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function approveStory(story: BookStory) {
+    const confirmed = window.confirm(
+      `Approve “${story.storyTitle}” for the book?\n\nThis marks the current family story as approved.`,
+    );
+
+    if (!confirmed) return;
+
+    setApprovingId(story.id);
+    setMessage(null);
+
+    try {
+      const response = await fetch(
+        "/api/cloudflare/reviews",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            recordingId: story.id,
+            reviewType: "story",
+          }),
+        },
+      );
+
+      const result = (await response.json()) as {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "The story could not be approved.",
+        );
+      }
+
+      await loadBook(vaultPerson);
+
+      setMessage({
+        type: "success",
+        text: `“${story.storyTitle}” is approved for the book.`,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "The story could not be approved.",
+      });
+    } finally {
+      setApprovingId(null);
     }
   }
 
@@ -244,8 +307,8 @@ export default function BookBuilderPage() {
           </h1>
 
           <p className="mt-3 max-w-3xl text-stone-600">
-            Review the finished family stories as they will be
-            organized into each legacy book.
+            Review and approve the finished family stories as they
+            will be organized into each legacy book.
           </p>
         </header>
 
@@ -259,7 +322,10 @@ export default function BookBuilderPage() {
               <button
                 key={vault.name}
                 type="button"
-                onClick={() => setVaultPerson(vault.name)}
+                onClick={() => {
+                  setVaultPerson(vault.name);
+                  setMessage(null);
+                }}
                 className={`rounded-2xl border p-4 text-left transition ${
                   vaultPerson === vault.name
                     ? "border-[#b57931] bg-[#f4e7cf]"
@@ -279,9 +345,20 @@ export default function BookBuilderPage() {
         </section>
 
         {message && (
-          <div className="mt-7 flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {message}
+          <div
+            className={`mt-7 flex gap-2 rounded-xl border p-4 text-sm ${
+              message.type === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-rose-200 bg-rose-50 text-rose-800"
+            }`}
+          >
+            {message.type === "success" ? (
+              <CheckCircle className="h-4 w-4 shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 shrink-0" />
+            )}
+
+            {message.text}
           </div>
         )}
 
@@ -491,7 +568,28 @@ export default function BookBuilderPage() {
                                 </p>
                               </div>
 
-                              <div className="mt-6">
+                              <div className="mt-6 flex flex-wrap gap-3">
+                                {!story.approvedAt && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void approveStory(story)
+                                    }
+                                    disabled={approvingId === story.id}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-[#3b4536] px-4 py-2 text-sm font-semibold text-white disabled:bg-stone-400"
+                                  >
+                                    {approvingId === story.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Check className="h-4 w-4" />
+                                    )}
+
+                                    {approvingId === story.id
+                                      ? "Approving…"
+                                      : "Approve Story"}
+                                  </button>
+                                )}
+
                                 <a
                                   href={`/admin?trackId=${encodeURIComponent(
                                     story.id,
