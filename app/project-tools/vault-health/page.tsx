@@ -1,6 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  strToU8,
+  Zip,
+  ZipPassThrough,
+} from 'fflate';
 
 import {
   AlertTriangle,
@@ -52,6 +57,67 @@ type HealthResponse = {
     missingAudioCount: number;
     sizeBytes: number;
   }>;
+};
+
+type BackupTrack = {
+  id: string;
+  title: string;
+  speaker: string;
+  category: string | null;
+  vault_person: string;
+  question_id: string | null;
+  storage_path: string | null;
+  audio_url: string | null;
+  transcript: string | null;
+  transcription_status: string;
+  transcription_error: string | null;
+  story_title: string | null;
+  story_chapter: string | null;
+  story_status: string;
+  story_error: string | null;
+  source_track_id: string | null;
+  clip_start_seconds: number | null;
+  clip_end_seconds: number | null;
+  split_notes: string | null;
+  is_split_master: number;
+  trashed_at: string | null;
+  trashed_by: string | null;
+  created_at: string;
+  updated_at: string;
+  speaker_1_name?: string | null;
+  speaker_2_name?: string | null;
+};
+
+type BackupManifest = {
+  createdAt: string;
+  createdBy: string;
+
+  metadata: {
+    audioTracks: BackupTrack[];
+    audioTrackReviews: unknown[];
+    questions: unknown[];
+    storyPhotos: unknown[];
+    vaultMembers: unknown[];
+    vaultAccess: unknown[];
+    backupHistory: unknown[];
+  };
+
+  files: {
+    audio: Array<{
+      trackId: string;
+      title: string;
+      storagePath: string;
+      downloadUrl: string;
+    }>;
+
+    photos: Array<{
+      photoId: string;
+      audioTrackId: string;
+      storagePath: string;
+      caption: string | null;
+      sortOrder: number;
+    }>;
+  };
 };
 
 function formatBytes(bytes: number) {
@@ -110,27 +176,175 @@ function formatDate(value: string) {
   return date.toLocaleString();
 }
 
+function safeFilePart(value: string) {
+  return (value || 'untitled')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 90);
+}
+
+function fileExtension(
+  path: string,
+  fallback = 'audio',
+) {
+  const cleanPath =
+    path.split('?')[0];
+
+  const fileName =
+    cleanPath.split('/').pop() || '';
+
+  const dot =
+    fileName.lastIndexOf('.');
+
+  if (
+    dot < 0 ||
+    dot === fileName.length - 1
+  ) {
+    return fallback;
+  }
+
+  return fileName
+    .slice(dot + 1)
+    .toLowerCase();
+}
+
+function addTextFile(
+  zip: Zip,
+  name: string,
+  text: string,
+) {
+  const entry =
+    new ZipPassThrough(name);
+
+  zip.add(entry);
+
+  entry.push(
+    strToU8(text),
+    true,
+  );
+}
+
+async function addResponseToZip(
+  zip: Zip,
+  name: string,
+  response: Response,
+) {
+  if (!response.body) {
+    throw new Error(
+      `Could not read ${name}.`,
+    );
+  }
+
+  const entry =
+    new ZipPassThrough(name);
+
+  zip.add(entry);
+
+  const reader =
+    response.body.getReader();
+
+  while (true) {
+    const {
+      done,
+      value,
+    } = await reader.read();
+
+    if (done) {
+      entry.push(
+        new Uint8Array(0),
+        true,
+      );
+
+      break;
+    }
+
+    if (
+      value &&
+      value.byteLength > 0
+    ) {
+      entry.push(
+        value,
+        false,
+      );
+    }
+  }
+}
+
+async function parseJsonResponse<T>(
+  response: Response,
+): Promise<T> {
+  const contentType =
+    response.headers.get(
+      'content-type',
+    ) || '';
+
+  if (
+    !contentType.includes(
+      'application/json',
+    )
+  ) {
+    const text =
+      await response.text();
+
+    throw new Error(
+      response.ok
+        ? 'The server returned an unexpected response.'
+        : `Server error ${response.status}: ${
+            text
+              .replace(/<[^>]*>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 160) ||
+            response.statusText
+          }`,
+    );
+  }
+
+  return response.json() as Promise<T>;
+}
+
 export default function VaultHealthPage() {
-  const [checkingAccess, setCheckingAccess] =
-    useState(true);
+  const [
+    checkingAccess,
+    setCheckingAccess,
+  ] = useState(true);
 
-  const [isAdmin, setIsAdmin] =
-    useState(false);
+  const [
+    isAdmin,
+    setIsAdmin,
+  ] = useState(false);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [backingUp, setBackingUp] =
-    useState(false);
+  const [
+    backingUp,
+    setBackingUp,
+  ] = useState(false);
 
-  const [health, setHealth] =
-    useState<HealthResponse | null>(null);
+  const [
+    backupProgress,
+    setBackupProgress,
+  ] = useState('');
 
-  const [message, setMessage] =
-    useState<{
-      type: 'success' | 'error';
-      text: string;
-    } | null>(null);
+  const [
+    health,
+    setHealth,
+  ] =
+    useState<HealthResponse | null>(
+      null,
+    );
+
+  const [
+    message,
+    setMessage,
+  ] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     void start();
@@ -149,15 +363,16 @@ export default function VaultHealthPage() {
         );
 
       const memberData =
-        (await memberResponse.json()) as {
+        await parseJsonResponse<{
           member?: {
             isAdmin: boolean;
           };
-        };
+        }>(memberResponse);
 
       const allowed =
         memberResponse.ok &&
-        !!memberData.member?.isAdmin;
+        !!memberData.member
+          ?.isAdmin;
 
       setIsAdmin(allowed);
 
@@ -185,11 +400,12 @@ export default function VaultHealthPage() {
         );
 
       const data =
-        (await response.json()) as
+        await parseJsonResponse<
           | HealthResponse
           | {
               error?: string;
-            };
+            }
+        >(response);
 
       if (
         !response.ok ||
@@ -220,47 +436,474 @@ export default function VaultHealthPage() {
   async function downloadBackup() {
     setBackingUp(true);
     setMessage(null);
+    setBackupProgress(
+      'Preparing backup…',
+    );
 
     try {
-      const response =
+      const manifestResponse =
         await fetch(
           '/api/cloudflare/backup',
+          {
+            cache: 'no-store',
+          },
         );
 
-      if (!response.ok) {
-        const result =
-          (await response
-            .json()
-            .catch(
-              () => null,
-            )) as {
-            error?: string;
-          } | null;
+      const manifest =
+        await parseJsonResponse<
+          | BackupManifest
+          | {
+              error?: string;
+            }
+        >(manifestResponse);
 
+      if (
+        !manifestResponse.ok ||
+        !('metadata' in manifest)
+      ) {
         throw new Error(
-          result?.error ||
-            'The backup could not be created.',
+          'error' in manifest &&
+          manifest.error
+            ? manifest.error
+            : 'The backup manifest could not be created.',
         );
       }
 
-      const blob =
-        await response.blob();
+      if (
+        manifest.files.photos.length >
+        0
+      ) {
+        throw new Error(
+          'This Vault contains story photos. Photo-file backup support must be enabled before a complete backup can be created.',
+        );
+      }
 
-      const disposition =
-        response.headers.get(
-          'content-disposition',
-        ) || '';
+      const zipChunks:
+        Uint8Array[] = [];
 
-      const match =
-        disposition.match(
-          /filename="?([^"]+)"?/i,
+      let zipError:
+        Error | null = null;
+
+      let zipFinished:
+        (() => void) | null =
+        null;
+
+      const zipFinishedPromise =
+        new Promise<void>(
+          (resolve) => {
+            zipFinished =
+              resolve;
+          },
         );
 
-      const filename =
-        match?.[1] ||
-        `fields-family-vault-backup-${new Date()
-          .toISOString()
-          .slice(0, 10)}.zip`;
+      const zip =
+        new Zip(
+          (
+            error,
+            data,
+            final,
+          ) => {
+            if (error) {
+              zipError =
+                error instanceof
+                Error
+                  ? error
+                  : new Error(
+                      'ZIP creation failed.',
+                    );
+
+              zipFinished?.();
+
+              return;
+            }
+
+            if (
+              data &&
+              data.byteLength > 0
+            ) {
+              zipChunks.push(data);
+            }
+
+            if (final) {
+              zipFinished?.();
+            }
+          },
+        );
+
+      addTextFile(
+        zip,
+        'START-HERE.txt',
+        [
+          'FIELDS FAMILY VAULT — FULL BACKUP',
+          '',
+          `Backup created: ${manifest.createdAt}`,
+          `Created by: ${manifest.createdBy}`,
+          '',
+          'This ZIP is intended to preserve the family archive even if the website',
+          'is no longer available.',
+          '',
+          'WHAT IS INCLUDED',
+          '',
+          'audio/',
+          '  Original audio files stored in the Vault.',
+          '',
+          'transcripts/',
+          '  Readable word-for-word transcript files.',
+          '',
+          'stories/',
+          '  Readable family-story files.',
+          '',
+          'metadata/',
+          '  Complete database information in JSON format.',
+          '',
+          'Nothing in the live Vault was removed or changed by creating this backup.',
+        ].join('\n'),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/audio_tracks.json',
+        JSON.stringify(
+          manifest.metadata
+            .audioTracks,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/audio_track_reviews.json',
+        JSON.stringify(
+          manifest.metadata
+            .audioTrackReviews,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/questions.json',
+        JSON.stringify(
+          manifest.metadata
+            .questions,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/story_photos.json',
+        JSON.stringify(
+          manifest.metadata
+            .storyPhotos,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/vault_members.json',
+        JSON.stringify(
+          manifest.metadata
+            .vaultMembers,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/vault_access.json',
+        JSON.stringify(
+          manifest.metadata
+            .vaultAccess,
+          null,
+          2,
+        ),
+      );
+
+      addTextFile(
+        zip,
+        'metadata/vault_backup_history.json',
+        JSON.stringify(
+          manifest.metadata
+            .backupHistory,
+          null,
+          2,
+        ),
+      );
+
+      const tracks =
+        manifest.metadata
+          .audioTracks;
+
+      for (
+        let index = 0;
+        index < tracks.length;
+        index += 1
+      ) {
+        const track =
+          tracks[index];
+
+        const date =
+          new Date(
+            track.created_at,
+          );
+
+        const datePart =
+          Number.isNaN(
+            date.getTime(),
+          )
+            ? 'unknown-date'
+            : date
+                .toISOString()
+                .slice(0, 10);
+
+        const baseName =
+          `${String(
+            index + 1,
+          ).padStart(
+            3,
+            '0',
+          )}-` +
+          `${datePart}-${safeFilePart(
+            track.title,
+          )}`;
+
+        addTextFile(
+          zip,
+          `transcripts/${baseName}.txt`,
+          [
+            `Title: ${track.title}`,
+            `Vault: ${track.vault_person}`,
+            `Speaker: ${track.speaker}`,
+            `Speaker 1: ${
+              track.speaker_1_name ||
+              'Not specified'
+            }`,
+            `Speaker 2: ${
+              track.speaker_2_name ||
+              'Not specified'
+            }`,
+            `Category: ${
+              track.category ||
+              'General'
+            }`,
+            `Created: ${track.created_at}`,
+            `Question ID: ${
+              track.question_id ||
+              'None'
+            }`,
+            `Source Track ID: ${
+              track.source_track_id ||
+              'None'
+            }`,
+            `Clip Start: ${
+              track.clip_start_seconds ===
+              null
+                ? 'None'
+                : `${track.clip_start_seconds} seconds`
+            }`,
+            `Clip End: ${
+              track.clip_end_seconds ===
+              null
+                ? 'None'
+                : `${track.clip_end_seconds} seconds`
+            }`,
+            '',
+            track.transcript ||
+              '[No transcript saved]',
+          ].join('\n'),
+        );
+
+        if (
+          track.story_title ||
+          track.story_chapter
+        ) {
+          addTextFile(
+            zip,
+            `stories/${baseName}.txt`,
+            [
+              `Title: ${
+                track.story_title ||
+                track.title
+              }`,
+              `Source recording: ${track.title}`,
+              `Vault: ${track.vault_person}`,
+              `Created: ${track.created_at}`,
+              '',
+              track.story_chapter ||
+                '[No family story saved]',
+            ].join('\n'),
+          );
+        }
+      }
+
+      const seenStorage =
+        new Set<string>();
+
+      let includedAudio =
+        0;
+
+      const missingAudio:
+        string[] = [];
+
+      for (
+        let index = 0;
+        index <
+        manifest.files.audio
+          .length;
+        index += 1
+      ) {
+        const file =
+          manifest.files.audio[
+            index
+          ];
+
+        if (
+          seenStorage.has(
+            file.storagePath,
+          )
+        ) {
+          continue;
+        }
+
+        seenStorage.add(
+          file.storagePath,
+        );
+
+        setBackupProgress(
+          `Downloading audio ${
+            index + 1
+          } of ${
+            manifest.files
+              .audio.length
+          }…`,
+        );
+
+        const response =
+          await fetch(
+            file.downloadUrl,
+            {
+              cache:
+                'no-store',
+            },
+          );
+
+        if (!response.ok) {
+          missingAudio.push(
+            `${file.title} | ${file.trackId} | ${file.storagePath}`,
+          );
+
+          continue;
+        }
+
+        const extension =
+          fileExtension(
+            file.storagePath,
+          );
+
+        const audioName =
+          `${String(
+            includedAudio + 1,
+          ).padStart(
+            3,
+            '0',
+          )}-` +
+          `${safeFilePart(
+            file.title,
+          )}.${extension}`;
+
+        await addResponseToZip(
+          zip,
+          `audio/${audioName}`,
+          response,
+        );
+
+        includedAudio +=
+          1;
+      }
+
+      addTextFile(
+        zip,
+        'metadata/backup-report.json',
+        JSON.stringify(
+          {
+            createdAt:
+              manifest.createdAt,
+            createdBy:
+              manifest.createdBy,
+            recordingCount:
+              tracks.length,
+            uniqueAudioFilesIncluded:
+              includedAudio,
+            missingAudio,
+            photoFilesIncluded:
+              0,
+          },
+          null,
+          2,
+        ),
+      );
+
+      if (
+        missingAudio.length >
+        0
+      ) {
+        addTextFile(
+          zip,
+          'MISSING-FILES.txt',
+          [
+            'FIELDS FAMILY VAULT — MISSING FILE REPORT',
+            '',
+            'The database information for these recordings is included,',
+            'but the corresponding audio file could not be downloaded.',
+            '',
+            'MISSING AUDIO',
+            '',
+            ...missingAudio,
+          ].join('\n'),
+        );
+      }
+
+      setBackupProgress(
+        'Finishing ZIP file…',
+      );
+
+      zip.end();
+
+      await zipFinishedPromise;
+
+      if (zipError) {
+        throw zipError;
+      }
+
+      const blob =
+        new Blob(
+          zipChunks as BlobPart[],
+          {
+            type:
+              'application/zip',
+          },
+        );
+
+      if (
+        blob.size === 0
+      ) {
+        throw new Error(
+          'The backup ZIP was empty.',
+        );
+      }
+
+      const fileDate =
+        manifest.createdAt.slice(
+          0,
+          10,
+        );
 
       const url =
         URL.createObjectURL(
@@ -274,7 +917,7 @@ export default function VaultHealthPage() {
 
       link.href = url;
       link.download =
-        filename;
+        `fields-family-vault-backup-${fileDate}.zip`;
 
       document.body.appendChild(
         link,
@@ -288,16 +931,14 @@ export default function VaultHealthPage() {
           URL.revokeObjectURL(
             url,
           ),
-        1000,
+        5000,
       );
 
       setMessage({
         type: 'success',
         text:
-          'Full Vault backup created and downloaded.',
+          `Full Vault backup created successfully. ${includedAudio} audio files were included.`,
       });
-
-      await loadHealth();
     } catch (error) {
       setMessage({
         type: 'error',
@@ -308,6 +949,7 @@ export default function VaultHealthPage() {
       });
     } finally {
       setBackingUp(false);
+      setBackupProgress('');
     }
   }
 
@@ -441,12 +1083,14 @@ export default function VaultHealthPage() {
             )}
 
             {backingUp
-              ? 'Creating Full Backup…'
+              ? backupProgress ||
+                'Creating Full Backup…'
               : 'Download Full Vault Backup'}
           </button>
         </section>
 
-        {loading && !health ? (
+        {loading &&
+        !health ? (
           <div className="mt-10 flex items-center justify-center rounded-2xl border border-stone-300 bg-[#fffaf0] p-12">
             <Loader2 className="h-7 w-7 animate-spin text-[#a66b27]" />
           </div>
@@ -455,14 +1099,16 @@ export default function VaultHealthPage() {
             <section
               className={`mt-7 rounded-2xl border p-5 ${
                 health.healthy &&
-                warningCount === 0
+                warningCount ===
+                  0
                   ? 'border-emerald-200 bg-emerald-50'
                   : 'border-amber-200 bg-amber-50'
               }`}
             >
               <div className="flex items-start gap-3">
                 {health.healthy &&
-                warningCount === 0 ? (
+                warningCount ===
+                  0 ? (
                   <CheckCircle className="mt-0.5 h-6 w-6 shrink-0 text-emerald-700" />
                 ) : (
                   <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-700" />
@@ -471,7 +1117,8 @@ export default function VaultHealthPage() {
                 <div>
                   <h2 className="font-serif text-2xl text-stone-900">
                     {health.healthy &&
-                    warningCount === 0
+                    warningCount ===
+                      0
                       ? 'Vault looks healthy'
                       : 'Vault needs attention'}
                   </h2>
@@ -613,7 +1260,7 @@ export default function VaultHealthPage() {
                   </h2>
 
                   <p className="mt-1 text-sm text-stone-600">
-                    Each successful full backup is recorded here.
+                    Successful recorded backups appear here.
                   </p>
                 </div>
               </div>
@@ -680,7 +1327,7 @@ export default function VaultHealthPage() {
                     </p>
 
                     <p className="mt-1 text-sm text-stone-600">
-                      Use Download Full Vault Backup above to create the first one.
+                      Use Download Full Vault Backup above to create one.
                     </p>
                   </div>
                 )}
