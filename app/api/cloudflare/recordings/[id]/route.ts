@@ -58,6 +58,7 @@ export async function PATCH(
         storyChapter?: unknown;
         speaker1Name?: unknown;
         speaker2Name?: unknown;
+        questionId?: unknown;
       };
 
     const transcript =
@@ -75,6 +76,9 @@ export async function PATCH(
     const speaker2Name =
       optionalText(body.speaker2Name);
 
+    const questionId =
+      optionalText(body.questionId);
+
     if (
       (body.transcript !== undefined &&
         transcript === undefined) ||
@@ -85,12 +89,14 @@ export async function PATCH(
       (body.speaker1Name !== undefined &&
         speaker1Name === undefined) ||
       (body.speaker2Name !== undefined &&
-        speaker2Name === undefined)
+        speaker2Name === undefined) ||
+      (body.questionId !== undefined &&
+        questionId === undefined)
     ) {
       return Response.json(
         {
           error:
-            "Transcript, story, and speaker names must be text.",
+            "Transcript, story, speaker names, and question ID must be text.",
         },
         { status: 400 },
       );
@@ -101,7 +107,8 @@ export async function PATCH(
       storyTitle === undefined &&
       storyChapter === undefined &&
       speaker1Name === undefined &&
-      speaker2Name === undefined
+      speaker2Name === undefined &&
+      questionId === undefined
     ) {
       return Response.json(
         {
@@ -174,6 +181,27 @@ export async function PATCH(
       );
     }
 
+    if (questionId) {
+      const question = await db
+        .prepare(
+          `SELECT id
+           FROM questions
+           WHERE id = ?`,
+        )
+        .bind(questionId)
+        .first<{ id: string }>();
+
+      if (!question) {
+        return Response.json(
+          {
+            error:
+              "The selected Story Question could not be found.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const assignments: string[] = [];
 
     const values: Array<
@@ -244,6 +272,16 @@ export async function PATCH(
       );
 
       values.push(speaker2Name);
+    }
+
+    if (
+      questionId !== undefined
+    ) {
+      assignments.push(
+        "question_id = ?",
+      );
+
+      values.push(questionId);
     }
 
     assignments.push(
