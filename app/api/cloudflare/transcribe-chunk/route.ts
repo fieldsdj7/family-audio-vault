@@ -12,6 +12,9 @@ type SecretEnv = CloudflareEnv & {
 };
 
 type DiarizedSegment = {
+  id?: string;
+  start?: number;
+  end?: number;
   text?: string;
   speaker?: string;
 };
@@ -24,40 +27,91 @@ type DiarizedTranscription = {
   };
 };
 
-function formatSpeakerTranscript(
+type TranscriptSegment = {
+  start: number;
+  end: number;
+  speaker: string | null;
+  text: string;
+};
+
+function usableSegments(
   response: DiarizedTranscription,
-) {
-  const segments =
-    (response.segments || []).filter(
+): TranscriptSegment[] {
+  return (response.segments || [])
+    .filter(
       (
         segment,
       ): segment is DiarizedSegment & {
+        start: number;
+        end: number;
         text: string;
-        speaker: string;
       } =>
+        Number.isFinite(
+          segment.start,
+        ) &&
+        Number.isFinite(
+          segment.end,
+        ) &&
         Boolean(
-          segment.text?.trim() &&
-            segment.speaker,
+          segment.text?.trim(),
         ),
-    );
+    )
+    .map((segment) => ({
+      start:
+        segment.start,
+      end:
+        segment.end,
+      speaker:
+        segment.speaker?.trim() ||
+        null,
+      text:
+        segment.text.trim(),
+    }));
+}
 
+function formatSpeakerTranscript(
+  segments: TranscriptSegment[],
+  fallbackText: string,
+) {
   if (!segments.length) {
-    return response.text?.trim() || "";
+    return fallbackText.trim();
   }
 
-  const speakers = [
+  const speakerIds = [
     ...new Set(
-      segments.map(
-        (segment) =>
-          segment.speaker,
-      ),
+      segments
+        .map(
+          (segment) =>
+            segment.speaker,
+        )
+        .filter(
+          (
+            speaker,
+          ): speaker is string =>
+            Boolean(speaker),
+        ),
     ),
   ];
 
+  if (
+    speakerIds.length <= 1
+  ) {
+    return segments
+      .map(
+        (segment) =>
+          segment.text,
+      )
+      .join(" ")
+      .trim();
+  }
+
   const speakerNumbers =
     new Map(
-      speakers.map(
-        (speaker, index) => [
+      speakerIds.map(
+        (
+          speaker,
+          index,
+        ) => [
           speaker,
           index + 1,
         ],
@@ -65,14 +119,11 @@ function formatSpeakerTranscript(
     );
 
   const turns: Array<{
-    speaker: string;
+    speaker: string | null;
     text: string;
   }> = [];
 
   for (const segment of segments) {
-    const text =
-      segment.text.trim();
-
     const previous =
       turns.at(-1);
 
@@ -81,23 +132,32 @@ function formatSpeakerTranscript(
       segment.speaker
     ) {
       previous.text =
-        `${previous.text} ${text}`;
+        `${previous.text} ${segment.text}`;
     } else {
       turns.push({
         speaker:
           segment.speaker,
-        text,
+        text:
+          segment.text,
       });
     }
   }
 
   return turns
-    .map(
-      (turn) =>
-        `Speaker ${speakerNumbers.get(
+    .map((turn) => {
+      if (!turn.speaker) {
+        return turn.text;
+      }
+
+      const number =
+        speakerNumbers.get(
           turn.speaker,
-        )}: ${turn.text}`,
-    )
+        );
+
+      return number
+        ? `Speaker ${number}: ${turn.text}`
+        : turn.text;
+    })
     .join("\n\n");
 }
 
@@ -212,7 +272,8 @@ export async function POST(
               `Bearer ${openAiKey}`,
           },
 
-          body: openAiForm,
+          body:
+            openAiForm,
         },
       );
 
@@ -239,9 +300,15 @@ export async function POST(
       );
     }
 
+    const segments =
+      usableSegments(
+        result,
+      );
+
     const transcript =
       formatSpeakerTranscript(
-        result,
+        segments,
+        result.text,
       );
 
     if (!transcript.trim()) {
@@ -256,6 +323,7 @@ export async function POST(
 
     return Response.json({
       transcript,
+      segments,
     });
   } catch (error) {
     console.error(
