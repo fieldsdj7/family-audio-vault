@@ -7,6 +7,8 @@ import {
 const MAX_CHUNK_BYTES =
   24 * 1024 * 1024;
 
+const MAX_KNOWN_SPEAKERS = 4;
+
 type SecretEnv = CloudflareEnv & {
   OPENAI_API_KEY?: string;
 };
@@ -161,6 +163,54 @@ function formatSpeakerTranscript(
     .join("\n\n");
 }
 
+function bytesToBase64(
+  bytes: Uint8Array,
+) {
+  let binary = "";
+
+  const chunkSize =
+    0x8000;
+
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += chunkSize
+  ) {
+    const chunk =
+      bytes.subarray(
+        offset,
+        Math.min(
+          offset + chunkSize,
+          bytes.length,
+        ),
+      );
+
+    binary +=
+      String.fromCharCode(
+        ...chunk,
+      );
+  }
+
+  return btoa(binary);
+}
+
+async function fileToDataUrl(
+  file: File,
+) {
+  const bytes =
+    new Uint8Array(
+      await file.arrayBuffer(),
+    );
+
+  const contentType =
+    file.type ||
+    "audio/wav";
+
+  return `data:${contentType};base64,${bytesToBase64(
+    bytes,
+  )}`;
+}
+
 export async function POST(
   request: Request,
 ) {
@@ -209,6 +259,64 @@ export async function POST(
             "This transcription chunk is still too large.",
         },
         { status: 413 },
+      );
+    }
+
+    const knownSpeakerNames =
+      form
+        .getAll(
+          "knownSpeakerName",
+        )
+        .filter(
+          (
+            value,
+          ): value is string =>
+            typeof value ===
+            "string" &&
+            Boolean(
+              value.trim(),
+            ),
+        )
+        .map((value) =>
+          value.trim(),
+        );
+
+    const knownSpeakerReferences =
+      form
+        .getAll(
+          "knownSpeakerReference",
+        )
+        .filter(
+          (
+            value,
+          ): value is File =>
+            value instanceof File &&
+            value.size > 0,
+        );
+
+    if (
+      knownSpeakerNames.length !==
+      knownSpeakerReferences.length
+    ) {
+      return Response.json(
+        {
+          error:
+            "Known speaker names and voice samples do not match.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      knownSpeakerNames.length >
+      MAX_KNOWN_SPEAKERS
+    ) {
+      return Response.json(
+        {
+          error:
+            "A maximum of four known speakers can be supplied.",
+        },
+        { status: 400 },
       );
     }
 
@@ -261,6 +369,32 @@ export async function POST(
         "transcription-chunk.wav",
     );
 
+    for (
+      let index = 0;
+      index <
+      knownSpeakerNames.length;
+      index += 1
+    ) {
+      const reference =
+        await fileToDataUrl(
+          knownSpeakerReferences[
+            index
+          ],
+        );
+
+      openAiForm.append(
+        "known_speaker_names[]",
+        knownSpeakerNames[
+          index
+        ],
+      );
+
+      openAiForm.append(
+        "known_speaker_references[]",
+        reference,
+      );
+    }
+
     const response =
       await fetch(
         "https://api.openai.com/v1/audio/transcriptions",
@@ -288,7 +422,8 @@ export async function POST(
       return Response.json(
         {
           error:
-            result.error?.message ||
+            result.error
+              ?.message ||
             "OpenAI could not transcribe this section of the recording.",
         },
         {
