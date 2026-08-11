@@ -79,6 +79,15 @@ type TranscriptSegment = {
   text: string;
 };
 
+type SavedTranscriptSegment = {
+  id: string;
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  speaker_label: string | null;
+  text: string;
+};
+
 const vaults: {
   name: VaultPerson;
   displayName: string;
@@ -688,6 +697,32 @@ async function transcribeRecording(
   );
 }
 
+function formatTranscriptTime(
+  seconds: number,
+) {
+  const safeSeconds =
+    Math.max(
+      0,
+      Math.floor(
+        Number.isFinite(seconds)
+          ? seconds
+          : 0,
+      ),
+    );
+
+  const minutes =
+    Math.floor(
+      safeSeconds / 60,
+    );
+
+  const remaining =
+    safeSeconds % 60;
+
+  return `${minutes}:${String(
+    remaining,
+  ).padStart(2, '0')}`;
+}
+
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -722,6 +757,11 @@ export default function AdminUpload() {
   const [speaker1Name, setSpeaker1Name] = useState('');
   const [speaker2Name, setSpeaker2Name] = useState('');
   const [editorQuestionId, setEditorQuestionId] = useState('');
+
+  const [transcriptSegments, setTranscriptSegments] =
+    useState<SavedTranscriptSegment[]>([]);
+  const [loadingTranscriptSegments, setLoadingTranscriptSegments] =
+    useState(false);
 
   const [photos, setPhotos] = useState<StoryPhoto[]>([]);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
@@ -765,8 +805,10 @@ export default function AdminUpload() {
   useEffect(() => {
     if (isAdmin && selectedTrackId) {
       void loadPhotos(selectedTrackId);
+      void loadTranscriptSegments(selectedTrackId);
     } else {
       setPhotos([]);
+      setTranscriptSegments([]);
     }
   }, [isAdmin, selectedTrackId]);
 
@@ -944,6 +986,83 @@ export default function AdminUpload() {
     }
 
     window.history.replaceState({}, '', url);
+  }
+
+  async function loadTranscriptSegments(
+    recordingId: string,
+  ) {
+    setLoadingTranscriptSegments(true);
+
+    try {
+      const response = await fetch(
+        `/api/cloudflare/transcript-segments/${encodeURIComponent(
+          recordingId,
+        )}`,
+        {
+          cache: 'no-store',
+        },
+      );
+
+      const data =
+        (await response.json()) as {
+          segments?: SavedTranscriptSegment[];
+          error?: string;
+        };
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Could not load transcript timestamps.',
+        );
+      }
+
+      setTranscriptSegments(
+        data.segments || [],
+      );
+    } catch (error) {
+      console.error(
+        'Could not load transcript timestamps.',
+        error,
+      );
+
+      setTranscriptSegments([]);
+    } finally {
+      setLoadingTranscriptSegments(false);
+    }
+  }
+
+  async function seekToTranscriptSegment(
+    segment: SavedTranscriptSegment,
+  ) {
+    const audio =
+      editorAudioRef.current;
+
+    if (!audio) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          'The audio player is not ready yet.',
+      });
+      return;
+    }
+
+    audio.currentTime =
+      Math.max(
+        0,
+        segment.start_seconds,
+      );
+
+    try {
+      await audio.play();
+    } catch {
+      setEditorMessage({
+        type: 'success',
+        text:
+          `Audio moved to ${formatTranscriptTime(
+            segment.start_seconds,
+          )}. Press Play if your browser did not start it automatically.`,
+      });
+    }
   }
 
   async function loadPhotos(recordingId: string) {
@@ -1409,6 +1528,10 @@ export default function AdminUpload() {
       );
 
       await fetchTracks(
+        trackId,
+      );
+
+      await loadTranscriptSegments(
         trackId,
       );
 
@@ -2290,6 +2413,62 @@ export default function AdminUpload() {
                       placeholder="The transcript will appear here."
                       className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
                     />
+
+                    <div className="mt-5 rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">
+                            Click-to-listen transcript
+                          </p>
+
+                          <p className="mt-1 text-xs text-stone-500">
+                            Click a timestamped section to jump the audio player to that point.
+                          </p>
+                        </div>
+
+                        {loadingTranscriptSegments && (
+                          <Loader2 className="h-4 w-4 animate-spin text-[#a66b27]" />
+                        )}
+                      </div>
+
+                      {!loadingTranscriptSegments &&
+                      transcriptSegments.length > 0 ? (
+                        <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
+                          {transcriptSegments.map((segment) => (
+                            <button
+                              key={segment.id}
+                              type="button"
+                              onClick={() =>
+                                void seekToTranscriptSegment(
+                                  segment,
+                                )
+                              }
+                              className="block w-full rounded-xl border border-stone-200 bg-white p-3 text-left hover:border-[#b57931] hover:bg-[#fffaf0]"
+                            >
+                              <span className="mr-2 inline-flex rounded-md bg-[#f4e7cf] px-2 py-1 text-xs font-bold tabular-nums text-[#80542a]">
+                                {formatTranscriptTime(
+                                  segment.start_seconds,
+                                )}
+                              </span>
+
+                              {segment.speaker_label && (
+                                <span className="mr-2 text-xs font-semibold text-stone-500">
+                                  {segment.speaker_label}
+                                </span>
+                              )}
+
+                              <span className="text-sm leading-relaxed text-stone-700">
+                                {segment.text}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : !loadingTranscriptSegments ? (
+                        <p className="mt-4 rounded-xl bg-white p-3 text-sm text-stone-500">
+                          No timestamped transcript is stored for this recording yet. New transcriptions will include clickable timing.
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="border-t border-stone-200 pt-6">
