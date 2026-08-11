@@ -16,6 +16,10 @@ import {
   Download,
   FileAudio,
   Headphones,
+  ImagePlus,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
   Loader2,
   RefreshCw,
   Save,
@@ -56,6 +60,16 @@ type Question = {
   id: string;
   question_number: number;
   question_text: string;
+};
+
+type StoryPhoto = {
+  id: string;
+  audio_track_id: string;
+  storage_path: string;
+  caption: string | null;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
 };
 
 const vaults: {
@@ -125,6 +139,16 @@ export default function AdminUpload() {
   const [speaker2Name, setSpeaker2Name] = useState('');
   const [editorQuestionId, setEditorQuestionId] = useState('');
 
+  const [photos, setPhotos] = useState<StoryPhoto[]>([]);
+  const [loadingPhotos, setLoadingPhotos] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoCaption, setPhotoCaption] = useState('');
+  const [photoInputKey, setPhotoInputKey] = useState(0);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [savingPhotoId, setSavingPhotoId] = useState<string | null>(null);
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
+  const [movingPhotoId, setMovingPhotoId] = useState<string | null>(null);
+
   const [savingEditor, setSavingEditor] = useState(false);
   const [reTranscribing, setReTranscribing] = useState(false);
   const [labelingSpeakers, setLabelingSpeakers] =
@@ -153,6 +177,14 @@ export default function AdminUpload() {
   useEffect(() => {
     void start();
   }, []);
+
+  useEffect(() => {
+    if (isAdmin && selectedTrackId) {
+      void loadPhotos(selectedTrackId);
+    } else {
+      setPhotos([]);
+    }
+  }, [isAdmin, selectedTrackId]);
 
   async function start() {
     setCheckingAccess(true);
@@ -328,6 +360,297 @@ export default function AdminUpload() {
     }
 
     window.history.replaceState({}, '', url);
+  }
+
+  async function loadPhotos(recordingId: string) {
+    setLoadingPhotos(true);
+
+    try {
+      const response = await fetch(
+        `/api/cloudflare/photos?recordingId=${encodeURIComponent(
+          recordingId,
+        )}`,
+        {
+          cache: 'no-store',
+        },
+      );
+
+      const data = (await response.json()) as {
+        photos?: StoryPhoto[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || 'Could not load the story photos.',
+        );
+      }
+
+      setPhotos(
+        (data.photos || []).sort(
+          (a, b) => a.sort_order - b.sort_order,
+        ),
+      );
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Could not load the story photos.',
+      });
+      setPhotos([]);
+    } finally {
+      setLoadingPhotos(false);
+    }
+  }
+
+  async function uploadStoryPhoto() {
+    if (!selectedTrack || !photoFile) {
+      setEditorMessage({
+        type: 'error',
+        text: 'Choose a photo before uploading.',
+      });
+      return;
+    }
+
+    setUploadingPhoto(true);
+    setEditorMessage(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', photoFile);
+      form.append('recordingId', selectedTrack.id);
+      form.append('caption', photoCaption.trim());
+
+      const response = await fetch(
+        '/api/cloudflare/photos',
+        {
+          method: 'POST',
+          body: form,
+        },
+      );
+
+      const result = (await response.json()) as {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || 'The photo could not be uploaded.',
+        );
+      }
+
+      setPhotoFile(null);
+      setPhotoCaption('');
+      setPhotoInputKey((key) => key + 1);
+
+      await loadPhotos(selectedTrack.id);
+
+      setEditorMessage({
+        type: 'success',
+        text: 'Photo added to this family story.',
+      });
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'The photo could not be uploaded.',
+      });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  function updatePhotoCaption(photoId: string, caption: string) {
+    setPhotos((current) =>
+      current.map((photo) =>
+        photo.id === photoId
+          ? { ...photo, caption }
+          : photo,
+      ),
+    );
+  }
+
+  async function savePhotoCaption(photo: StoryPhoto) {
+    setSavingPhotoId(photo.id);
+    setEditorMessage(null);
+
+    try {
+      const response = await fetch(
+        '/api/cloudflare/photos',
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            photoId: photo.id,
+            caption: photo.caption || '',
+          }),
+        },
+      );
+
+      const result = (await response.json()) as {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || 'The photo caption could not be saved.',
+        );
+      }
+
+      setEditorMessage({
+        type: 'success',
+        text: 'Photo caption saved.',
+      });
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'The photo caption could not be saved.',
+      });
+    } finally {
+      setSavingPhotoId(null);
+    }
+  }
+
+  async function movePhoto(photo: StoryPhoto, direction: 'up' | 'down') {
+    const ordered = [...photos].sort(
+      (a, b) => a.sort_order - b.sort_order,
+    );
+
+    const index = ordered.findIndex(
+      (item) => item.id === photo.id,
+    );
+
+    const otherIndex =
+      direction === 'up'
+        ? index - 1
+        : index + 1;
+
+    if (
+      index < 0 ||
+      otherIndex < 0 ||
+      otherIndex >= ordered.length
+    ) {
+      return;
+    }
+
+    const other = ordered[otherIndex];
+
+    setMovingPhotoId(photo.id);
+    setEditorMessage(null);
+
+    try {
+      const [firstResponse, secondResponse] = await Promise.all([
+        fetch('/api/cloudflare/photos', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            photoId: photo.id,
+            sortOrder: other.sort_order,
+          }),
+        }),
+        fetch('/api/cloudflare/photos', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            photoId: other.id,
+            sortOrder: photo.sort_order,
+          }),
+        }),
+      ]);
+
+      const firstResult = (await firstResponse.json()) as {
+        error?: string;
+      };
+      const secondResult = (await secondResponse.json()) as {
+        error?: string;
+      };
+
+      if (!firstResponse.ok || !secondResponse.ok) {
+        throw new Error(
+          firstResult.error ||
+            secondResult.error ||
+            'The photo order could not be changed.',
+        );
+      }
+
+      await loadPhotos(selectedTrack.id);
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'The photo order could not be changed.',
+      });
+    } finally {
+      setMovingPhotoId(null);
+    }
+  }
+
+  async function deleteStoryPhoto(photo: StoryPhoto) {
+    const confirmed = window.confirm(
+      'Permanently remove this photo from the story?\n\nThe image file will also be deleted from private Cloudflare storage.',
+    );
+
+    if (!confirmed) return;
+
+    setDeletingPhotoId(photo.id);
+    setEditorMessage(null);
+
+    try {
+      const response = await fetch(
+        '/api/cloudflare/photos',
+        {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            photoId: photo.id,
+          }),
+        },
+      );
+
+      const result = (await response.json()) as {
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || 'The photo could not be removed.',
+        );
+      }
+
+      await loadPhotos(selectedTrack.id);
+
+      setEditorMessage({
+        type: 'success',
+        text: 'Photo removed from this story.',
+      });
+    } catch (error) {
+      setEditorMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'The photo could not be removed.',
+      });
+    } finally {
+      setDeletingPhotoId(null);
+    }
   }
 
   async function saveSpeakerNames(trackId: string) {
@@ -1481,6 +1804,209 @@ export default function AdminUpload() {
                         className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 font-serif leading-relaxed"
                       />
                     </div>
+                  </div>
+
+                  <div className="border-t border-stone-200 pt-6">
+                    <div className="flex items-center gap-2">
+                      <ImagePlus className="h-4 w-4 text-[#a66b27]" />
+
+                      <p className="text-sm font-semibold">
+                        Story Photos
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-sm text-stone-600">
+                      Attach photos to this story for the family book.
+                      Add a caption now or edit it later.
+                    </p>
+
+                    <div className="mt-4 rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-sm font-semibold">
+                            Photo
+                          </label>
+
+                          <input
+                            key={photoInputKey}
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) =>
+                              setPhotoFile(
+                                event.target.files?.[0] || null,
+                              )
+                            }
+                            className="w-full rounded-xl border border-dashed border-stone-400 bg-white px-4 py-3"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-sm font-semibold">
+                            Caption
+                          </label>
+
+                          <input
+                            value={photoCaption}
+                            onChange={(event) =>
+                              setPhotoCaption(event.target.value)
+                            }
+                            placeholder="Example: Bill with his brothers, 1952"
+                            className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void uploadStoryPhoto()
+                        }
+                        disabled={
+                          uploadingPhoto ||
+                          !photoFile
+                        }
+                        className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#80542a] px-4 py-3 text-sm font-semibold text-white disabled:bg-stone-400"
+                      >
+                        {uploadingPhoto ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <ImagePlus className="h-4 w-4" />
+                        )}
+
+                        {uploadingPhoto
+                          ? 'Uploading photo…'
+                          : 'Add Photo to Story'}
+                      </button>
+                    </div>
+
+                    {loadingPhotos ? (
+                      <div className="mt-4 flex items-center gap-2 rounded-xl bg-stone-100 p-4 text-sm text-stone-600">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading story photos…
+                      </div>
+                    ) : photos.length ? (
+                      <div className="mt-5 space-y-4">
+                        {photos.map((photo, index) => (
+                          <div
+                            key={photo.id}
+                            className="overflow-hidden rounded-2xl border border-stone-200 bg-white"
+                          >
+                            <div className="grid gap-4 p-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+                              <div className="overflow-hidden rounded-xl bg-stone-100">
+                                <img
+                                  src={`/api/cloudflare/photo/${photo.id}`}
+                                  alt={
+                                    photo.caption?.trim() ||
+                                    `Story photo ${index + 1}`
+                                  }
+                                  className="h-44 w-full object-contain"
+                                />
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">
+                                    Photo {index + 1}
+                                  </p>
+
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      title="Move photo up"
+                                      onClick={() =>
+                                        void movePhoto(photo, 'up')
+                                      }
+                                      disabled={
+                                        index === 0 ||
+                                        movingPhotoId !== null
+                                      }
+                                      className="rounded-lg border border-stone-300 bg-white p-2 text-stone-600 disabled:opacity-40"
+                                    >
+                                      <ArrowUp className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      title="Move photo down"
+                                      onClick={() =>
+                                        void movePhoto(photo, 'down')
+                                      }
+                                      disabled={
+                                        index === photos.length - 1 ||
+                                        movingPhotoId !== null
+                                      }
+                                      className="rounded-lg border border-stone-300 bg-white p-2 text-stone-600 disabled:opacity-40"
+                                    >
+                                      <ArrowDown className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      title="Delete photo"
+                                      onClick={() =>
+                                        void deleteStoryPhoto(photo)
+                                      }
+                                      disabled={
+                                        deletingPhotoId === photo.id
+                                      }
+                                      className="rounded-lg border border-rose-200 bg-rose-50 p-2 text-rose-700 disabled:opacity-50"
+                                    >
+                                      {deletingPhotoId === photo.id ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <label className="mt-3 block text-sm font-semibold">
+                                  Caption
+                                </label>
+
+                                <textarea
+                                  rows={3}
+                                  value={photo.caption || ''}
+                                  onChange={(event) =>
+                                    updatePhotoCaption(
+                                      photo.id,
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="Describe this photo for the family book."
+                                  className="mt-1.5 w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 text-sm"
+                                />
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void savePhotoCaption(photo)
+                                  }
+                                  disabled={
+                                    savingPhotoId === photo.id
+                                  }
+                                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-[#fffaf0] px-3 py-2 text-sm font-semibold text-stone-700 disabled:opacity-50"
+                                >
+                                  {savingPhotoId === photo.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Save className="h-4 w-4" />
+                                  )}
+
+                                  {savingPhotoId === photo.id
+                                    ? 'Saving caption…'
+                                    : 'Save Caption'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 rounded-xl bg-stone-100 p-4 text-sm text-stone-500">
+                        No photos are attached to this story yet.
+                      </p>
+                    )}
                   </div>
 
                   <button
