@@ -586,7 +586,9 @@ export default function AdminUpload() {
         );
       }
 
-      await loadPhotos(selectedTrack.id);
+      if (selectedTrack) {
+        await loadPhotos(selectedTrack.id);
+      }
     } catch (error) {
       setEditorMessage({
         type: 'error',
@@ -634,7 +636,9 @@ export default function AdminUpload() {
         );
       }
 
-      await loadPhotos(selectedTrack.id);
+      if (selectedTrack) {
+        await loadPhotos(selectedTrack.id);
+      }
 
       setEditorMessage({
         type: 'success',
