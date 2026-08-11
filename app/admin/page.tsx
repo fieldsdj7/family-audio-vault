@@ -72,6 +72,13 @@ type StoryPhoto = {
   updated_at?: string;
 };
 
+type TranscriptSegment = {
+  start: number;
+  end: number;
+  speaker: string | null;
+  text: string;
+};
+
 const vaults: {
   name: VaultPerson;
   displayName: string;
@@ -438,6 +445,9 @@ async function transcribeLongRecording(
     const transcripts: string[] =
       [];
 
+    const combinedSegments: TranscriptSegment[] =
+      [];
+
     const totalChunks =
       boundaries.length - 1;
 
@@ -488,6 +498,7 @@ async function transcribeLongRecording(
         (await response.json()) as {
           error?: string;
           transcript?: string;
+          segments?: TranscriptSegment[];
         };
 
       if (
@@ -503,6 +514,40 @@ async function transcribeLongRecording(
       transcripts.push(
         result.transcript.trim(),
       );
+
+      const chunkStart =
+        boundaries[index];
+
+      for (
+        const segment of
+        result.segments || []
+      ) {
+        if (
+          !Number.isFinite(
+            segment.start,
+          ) ||
+          !Number.isFinite(
+            segment.end,
+          ) ||
+          !segment.text?.trim()
+        ) {
+          continue;
+        }
+
+        combinedSegments.push({
+          start:
+            chunkStart +
+            segment.start,
+          end:
+            chunkStart +
+            segment.end,
+          speaker:
+            segment.speaker ||
+            null,
+          text:
+            segment.text.trim(),
+        });
+      }
     }
 
     const combinedTranscript =
@@ -539,6 +584,41 @@ async function transcribeLongRecording(
       throw new Error(
         saveResult.error ||
           'The completed long transcript could not be saved.',
+      );
+    }
+
+    onProgress(
+      'Saving transcript timestamps…',
+    );
+
+    const segmentResponse =
+      await fetch(
+        '/api/cloudflare/transcript-segments',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            trackId,
+            segments:
+              combinedSegments,
+          }),
+        },
+      );
+
+    const segmentResult =
+      (await segmentResponse.json()) as {
+        error?: string;
+        saved?: boolean;
+        segmentCount?: number;
+      };
+
+    if (!segmentResponse.ok) {
+      throw new Error(
+        segmentResult.error ||
+          'The long transcript was saved, but its timestamps could not be saved.',
       );
     }
 
