@@ -627,8 +627,14 @@ export async function POST(
       }
     }
 
-    return vaultAccessResponse(
-      error,
-    );
+   return Response.json(
+  {
+    error:
+      error instanceof Error
+        ? error.message
+        : "The recording could not be transcribed.",
+  },
+  { status: 500 },
+);
   }
 }
