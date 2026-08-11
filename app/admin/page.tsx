@@ -105,6 +105,509 @@ function vaultDisplayName(
   );
 }
 
+function writeWavString(
+  view: DataView,
+  offset: number,
+  value: string,
+) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(
+      offset + index,
+      value.charCodeAt(index),
+    );
+  }
+}
+
+function findQuietBoundary(
+  buffer: AudioBuffer,
+  targetSeconds: number,
+) {
+  const searchRadiusSeconds = 12;
+  const windowSeconds = 0.25;
+  const stepSeconds = 0.1;
+  const sampleStride = 32;
+
+  const searchStart = Math.max(
+    1,
+    targetSeconds - searchRadiusSeconds,
+  );
+
+  const searchEnd = Math.min(
+    buffer.duration - 1,
+    targetSeconds + searchRadiusSeconds,
+  );
+
+  let bestTime = targetSeconds;
+  let bestLevel = Number.POSITIVE_INFINITY;
+
+  for (
+    let time = searchStart;
+    time <= searchEnd;
+    time += stepSeconds
+  ) {
+    const startFrame = Math.floor(
+      time * buffer.sampleRate,
+    );
+
+    const endFrame = Math.min(
+      buffer.length,
+      Math.floor(
+        (time + windowSeconds) * buffer.sampleRate,
+      ),
+    );
+
+    let total = 0;
+    let samples = 0;
+
+    for (
+      let frame = startFrame;
+      frame < endFrame;
+      frame += sampleStride
+    ) {
+      let mixed = 0;
+
+      for (
+        let channel = 0;
+        channel < buffer.numberOfChannels;
+        channel += 1
+      ) {
+        mixed += Math.abs(
+          buffer.getChannelData(channel)[frame] || 0,
+        );
+      }
+
+      total += mixed / buffer.numberOfChannels;
+      samples += 1;
+    }
+
+    const level =
+      samples > 0
+        ? total / samples
+        : Number.POSITIVE_INFINITY;
+
+    if (level < bestLevel) {
+      bestLevel = level;
+      bestTime = time + windowSeconds / 2;
+    }
+  }
+
+  return bestTime;
+}
+
+function createMonoTranscriptionWav(
+  buffer: AudioBuffer,
+  startSeconds: number,
+  endSeconds: number,
+  chunkNumber: number,
+) {
+  const targetSampleRate = 16000;
+
+  const durationSeconds = Math.max(
+    0,
+    endSeconds - startSeconds,
+  );
+
+  const outputSamples = Math.max(
+    1,
+    Math.floor(
+      durationSeconds * targetSampleRate,
+    ),
+  );
+
+  const dataSize =
+    outputSamples * 2;
+
+  const output =
+    new ArrayBuffer(
+      44 + dataSize,
+    );
+
+  const view =
+    new DataView(output);
+
+  writeWavString(
+    view,
+    0,
+    'RIFF',
+  );
+
+  view.setUint32(
+    4,
+    36 + dataSize,
+    true,
+  );
+
+  writeWavString(
+    view,
+    8,
+    'WAVE',
+  );
+
+  writeWavString(
+    view,
+    12,
+    'fmt ',
+  );
+
+  view.setUint32(
+    16,
+    16,
+    true,
+  );
+
+  view.setUint16(
+    20,
+    1,
+    true,
+  );
+
+  view.setUint16(
+    22,
+    1,
+    true,
+  );
+
+  view.setUint32(
+    24,
+    targetSampleRate,
+    true,
+  );
+
+  view.setUint32(
+    28,
+    targetSampleRate * 2,
+    true,
+  );
+
+  view.setUint16(
+    32,
+    2,
+    true,
+  );
+
+  view.setUint16(
+    34,
+    16,
+    true,
+  );
+
+  writeWavString(
+    view,
+    36,
+    'data',
+  );
+
+  view.setUint32(
+    40,
+    dataSize,
+    true,
+  );
+
+  const channelData =
+    Array.from(
+      {
+        length: buffer.numberOfChannels,
+      },
+      (_, channel) =>
+        buffer.getChannelData(channel),
+    );
+
+  const sourceRate =
+    buffer.sampleRate;
+
+  let offset = 44;
+
+  for (
+    let sample = 0;
+    sample < outputSamples;
+    sample += 1
+  ) {
+    const sourceTime =
+      startSeconds +
+      sample / targetSampleRate;
+
+    const sourceFrame = Math.min(
+      buffer.length - 1,
+      Math.floor(
+        sourceTime * sourceRate,
+      ),
+    );
+
+    let value = 0;
+
+    for (
+      let channel = 0;
+      channel < channelData.length;
+      channel += 1
+    ) {
+      value +=
+        channelData[channel][sourceFrame] || 0;
+    }
+
+    value /=
+      Math.max(
+        1,
+        channelData.length,
+      );
+
+    value = Math.max(
+      -1,
+      Math.min(
+        1,
+        value,
+      ),
+    );
+
+    view.setInt16(
+      offset,
+      value < 0
+        ? value * 0x8000
+        : value * 0x7fff,
+      true,
+    );
+
+    offset += 2;
+  }
+
+  return new File(
+    [output],
+    `transcription-part-${chunkNumber}.wav`,
+    {
+      type: 'audio/wav',
+    },
+  );
+}
+
+async function transcribeLongRecording(
+  trackId: string,
+  onProgress: (message: string) => void,
+) {
+  onProgress(
+    'Preparing the long recording…',
+  );
+
+  const audioResponse = await fetch(
+    `/api/cloudflare/audio/${trackId}`,
+    {
+      cache: 'no-store',
+    },
+  );
+
+  if (!audioResponse.ok) {
+    throw new Error(
+      'The original recording could not be opened for long transcription.',
+    );
+  }
+
+  const sourceData =
+    await audioResponse.arrayBuffer();
+
+  const audioContext =
+    new AudioContext();
+
+  try {
+    const decoded =
+      await audioContext.decodeAudioData(
+        sourceData.slice(0),
+      );
+
+    const targetChunkSeconds =
+      6 * 60;
+
+    const boundaries: number[] = [
+      0,
+    ];
+
+    for (
+      let target = targetChunkSeconds;
+      target < decoded.duration;
+      target += targetChunkSeconds
+    ) {
+      boundaries.push(
+        findQuietBoundary(
+          decoded,
+          target,
+        ),
+      );
+    }
+
+    boundaries.push(
+      decoded.duration,
+    );
+
+    const transcripts: string[] =
+      [];
+
+    const totalChunks =
+      boundaries.length - 1;
+
+    for (
+      let index = 0;
+      index < totalChunks;
+      index += 1
+    ) {
+      onProgress(
+        `Transcribing section ${index + 1} of ${totalChunks}…`,
+      );
+
+      const chunk =
+        createMonoTranscriptionWav(
+          decoded,
+          boundaries[index],
+          boundaries[index + 1],
+          index + 1,
+        );
+
+      if (
+        chunk.size >
+        24 * 1024 * 1024
+      ) {
+        throw new Error(
+          `Transcription section ${index + 1} is unexpectedly too large.`,
+        );
+      }
+
+      const form =
+        new FormData();
+
+      form.append(
+        'file',
+        chunk,
+      );
+
+      const response =
+        await fetch(
+          '/api/cloudflare/transcribe-chunk',
+          {
+            method: 'POST',
+            body: form,
+          },
+        );
+
+      const result =
+        (await response.json()) as {
+          error?: string;
+          transcript?: string;
+        };
+
+      if (
+        !response.ok ||
+        !result.transcript?.trim()
+      ) {
+        throw new Error(
+          result.error ||
+            `Section ${index + 1} could not be transcribed.`,
+        );
+      }
+
+      transcripts.push(
+        result.transcript.trim(),
+      );
+    }
+
+    const combinedTranscript =
+      transcripts.join(
+        '\n\n',
+      );
+
+    onProgress(
+      'Saving the complete transcript…',
+    );
+
+    const saveResponse =
+      await fetch(
+        `/api/cloudflare/recordings/${trackId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type':
+              'application/json',
+          },
+          body: JSON.stringify({
+            transcript:
+              combinedTranscript,
+          }),
+        },
+      );
+
+    const saveResult =
+      (await saveResponse.json()) as {
+        error?: string;
+      };
+
+    if (!saveResponse.ok) {
+      throw new Error(
+        saveResult.error ||
+          'The completed long transcript could not be saved.',
+      );
+    }
+
+    return combinedTranscript;
+  } finally {
+    await audioContext.close();
+  }
+}
+
+async function transcribeRecording(
+  trackId: string,
+  onProgress: (message: string) => void,
+) {
+  onProgress(
+    'Transcribing recording…',
+  );
+
+  const response = await fetch(
+    '/api/cloudflare/transcribe',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        trackId,
+      }),
+    },
+  );
+
+  const result =
+    (await response.json()) as {
+      error?: string;
+      transcript?: string;
+    };
+
+  if (response.ok) {
+    if (!result.transcript?.trim()) {
+      throw new Error(
+        'The transcription finished without returning any transcript.',
+      );
+    }
+
+    return result.transcript;
+  }
+
+  const errorMessage =
+    result.error ||
+    'The transcript could not be created.';
+
+  if (
+    !errorMessage
+      .toLowerCase()
+      .includes(
+        'over 25 mb',
+      )
+  ) {
+    throw new Error(
+      errorMessage,
+    );
+  }
+
+  return transcribeLongRecording(
+    trackId,
+    onProgress,
+  );
+}
+
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -121,6 +624,7 @@ export default function AdminUpload() {
 
   const [uploading, setUploading] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
+  const [transcriptionProgress, setTranscriptionProgress] = useState('');
 
   const [message, setMessage] = useState<{
     type: 'success' | 'error';
@@ -801,39 +1305,32 @@ export default function AdminUpload() {
     const trackId = selectedTrack.id;
 
     setReTranscribing(true);
+    setTranscriptionProgress('');
     setEditorMessage(null);
 
     try {
-      const response = await fetch(
-        '/api/cloudflare/transcribe',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      const transcript =
+        await transcribeRecording(
+          trackId,
+          (progress) => {
+            setTranscriptionProgress(
+              progress,
+            );
+
+            setEditorMessage({
+              type: 'success',
+              text: progress,
+            });
           },
-          body: JSON.stringify({
-            trackId,
-          }),
-        },
+        );
+
+      setTranscriptDraft(
+        transcript,
       );
 
-      const result = (await response.json()) as {
-        error?: string;
-        transcript?: string;
-      };
-
-      if (!response.ok) {
-        throw new Error(
-          result.error ||
-            'The transcript could not be created.',
-        );
-      }
-
-      if (result.transcript?.trim()) {
-        setTranscriptDraft(result.transcript);
-      }
-
-      await fetchTracks(trackId);
+      await fetchTracks(
+        trackId,
+      );
 
       setEditorMessage({
         type: 'success',
@@ -850,6 +1347,7 @@ export default function AdminUpload() {
       });
     } finally {
       setReTranscribing(false);
+      setTranscriptionProgress('');
     }
   }
 
@@ -1068,32 +1566,29 @@ export default function AdminUpload() {
           'Recording saved. Creating the word-for-word transcript now…',
       });
 
-      const transcriptionResponse = await fetch(
-        '/api/cloudflare/transcribe',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      try {
+        await transcribeRecording(
+          newTrackId,
+          (progress) => {
+            setTranscriptionProgress(
+              progress,
+            );
+
+            setMessage({
+              type: 'success',
+              text:
+                `Recording saved safely. ${progress}`,
+            });
           },
-          body: JSON.stringify({
-            trackId: newTrackId,
-          }),
-        },
-      );
-
-      const transcriptionResult =
-        (await transcriptionResponse.json()) as {
-          error?: string;
-          transcript?: string;
-        };
-
-      if (!transcriptionResponse.ok) {
+        );
+      } catch (transcriptionError) {
         setMessage({
           type: 'error',
           text:
             `The recording was safely saved, but the transcript could not be created: ${
-              transcriptionResult.error ||
-              'Unknown error'
+              transcriptionError instanceof Error
+                ? transcriptionError.message
+                : 'Unknown error'
             }`,
         });
 
@@ -1128,6 +1623,7 @@ export default function AdminUpload() {
     } finally {
       setUploading(false);
       setTranscribing(false);
+      setTranscriptionProgress('');
     }
   }
 
@@ -1384,7 +1880,7 @@ export default function AdminUpload() {
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
                   {transcribing
-                    ? 'Transcribing recording…'
+                    ? transcriptionProgress || 'Transcribing recording…'
                     : 'Saving memory…'}
                 </>
               ) : (
@@ -1695,7 +2191,7 @@ export default function AdminUpload() {
                           )}
 
                           {reTranscribing
-                            ? 'Transcribing…'
+                            ? transcriptionProgress || 'Transcribing…'
                             : transcriptDraft.trim()
                               ? 'Re-transcribe'
                               : 'Create transcript'}
