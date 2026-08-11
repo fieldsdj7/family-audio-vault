@@ -107,25 +107,86 @@ function formatSpeakerTranscript(
       .trim();
   }
 
+  /*
+   * Known speaker references come back from OpenAI
+   * using the names we supplied, such as "Speaker 1"
+   * and "Speaker 2". Preserve those numbers exactly.
+   *
+   * Any unidentified A/B/C-style speakers are assigned
+   * the next unused Speaker number.
+   */
   const speakerNumbers =
-    new Map(
-      speakerIds.map(
-        (
-          speaker,
-          index,
-        ) => [
-          speaker,
-          index + 1,
-        ],
-      ),
+    new Map<string, number>();
+
+  const usedNumbers =
+    new Set<number>();
+
+  for (
+    const speaker of speakerIds
+  ) {
+    const knownMatch =
+      speaker.match(
+        /^Speaker\s+([1-4])$/i,
+      );
+
+    if (knownMatch) {
+      const number =
+        Number(
+          knownMatch[1],
+        );
+
+      speakerNumbers.set(
+        speaker,
+        number,
+      );
+
+      usedNumbers.add(
+        number,
+      );
+    }
+  }
+
+  let nextNumber = 1;
+
+  for (
+    const speaker of speakerIds
+  ) {
+    if (
+      speakerNumbers.has(
+        speaker,
+      )
+    ) {
+      continue;
+    }
+
+    while (
+      usedNumbers.has(
+        nextNumber,
+      )
+    ) {
+      nextNumber += 1;
+    }
+
+    speakerNumbers.set(
+      speaker,
+      nextNumber,
     );
+
+    usedNumbers.add(
+      nextNumber,
+    );
+
+    nextNumber += 1;
+  }
 
   const turns: Array<{
     speaker: string | null;
     text: string;
   }> = [];
 
-  for (const segment of segments) {
+  for (
+    const segment of segments
+  ) {
     const previous =
       turns.at(-1);
 
