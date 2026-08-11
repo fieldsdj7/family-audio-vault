@@ -3,7 +3,6 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
   getVaultBindings,
   requireVaultMember,
-  vaultAccessResponse,
 } from "../../../../lib/cloudflare";
 
 export const maxDuration = 300;
@@ -16,6 +15,8 @@ type TrackRow = {
 };
 
 type DiarizedSegment = {
+  start?: number;
+  end?: number;
   text?: string;
   speaker?: string;
 };
@@ -34,49 +35,73 @@ type SecretEnv = CloudflareEnv & {
   OPENAI_API_KEY?: string;
 };
 
+type TranscriptSegment = {
+  start: number;
+  end: number;
+  speaker: string | null;
+  text: string;
+};
+
 function fileNameFromPath(path: string) {
   return path.split("/").pop() || "recording.mp3";
 }
 
-function formatSpeakerTranscript(
+function usableSegments(
   response: DiarizedTranscription,
-) {
-  const segments = (response.segments || []).filter(
-    (
-      segment,
-    ): segment is DiarizedSegment & {
-      text: string;
-      speaker: string;
-    } =>
-      Boolean(
-        segment.text?.trim() &&
-          segment.speaker,
-      ),
-  );
+): TranscriptSegment[] {
+  return (response.segments || [])
+    .filter(
+      (
+        segment,
+      ): segment is DiarizedSegment & {
+        start: number;
+        end: number;
+        text: string;
+      } =>
+        Number.isFinite(segment.start) &&
+        Number.isFinite(segment.end) &&
+        Boolean(segment.text?.trim()),
+    )
+    .map((segment) => ({
+      start: segment.start,
+      end: segment.end,
+      speaker:
+        segment.speaker?.trim() || null,
+      text: segment.text.trim(),
+    }));
+}
 
-  const speakers = [
+function formatSpeakerTranscript(
+  segments: TranscriptSegment[],
+  fallbackText: string,
+) {
+  if (!segments.length) {
+    return fallbackText.trim();
+  }
+
+  const speakerIds = [
     ...new Set(
-      segments.map(
-        (segment) => segment.speaker,
-      ),
+      segments
+        .map((segment) => segment.speaker)
+        .filter(
+          (
+            speaker,
+          ): speaker is string =>
+            Boolean(speaker),
+        ),
     ),
   ];
 
-  if (speakers.length <= 1) {
-    return (
-      response.text?.trim() ||
-      segments
-        .map(
-          (segment) =>
-            segment.text.trim(),
-        )
-        .join(" ")
-    );
+  if (speakerIds.length <= 1) {
+    return segments
+      .map((segment) => segment.text)
+      .join(" ")
+      .trim();
   }
 
   const speakerNumbers =
     new Map(
-      speakers.map(
+      speakerIds.map(
         (speaker, index) => [
           speaker,
           index + 1,
@@ -85,39 +110,43 @@ function formatSpeakerTranscript(
     );
 
   const turns: Array<{
-    speaker: string;
+    speaker: string | null;
     text: string;
   }> = [];
 
   for (const segment of segments) {
-    const text =
-      segment.text.trim();
-
-    const previousTurn =
+    const previous =
       turns.at(-1);
 
     if (
-      previousTurn?.speaker ===
+      previous?.speaker ===
       segment.speaker
     ) {
-      previousTurn.text =
-        `${previousTurn.text} ${text}`;
+      previous.text =
+        `${previous.text} ${segment.text}`;
     } else {
       turns.push({
-        speaker:
-          segment.speaker,
-        text,
+        speaker: segment.speaker,
+        text: segment.text,
       });
     }
   }
 
   return turns
-    .map(
-      (turn) =>
-        `Speaker ${speakerNumbers.get(
+    .map((turn) => {
+      if (!turn.speaker) {
+        return turn.text;
+      }
+
+      const number =
+        speakerNumbers.get(
           turn.speaker,
-        )}: ${turn.text}`,
-    )
+        );
+
+      return number
+        ? `Speaker ${number}: ${turn.text}`
+        : turn.text;
+    })
     .join("\n\n");
 }
 
@@ -186,10 +215,6 @@ function hasSpeakerLabels(
       transcript,
     );
 
-  /*
-   * Some recordings may genuinely contain
-   * only one detected speaker.
-   */
   return hasSpeaker1
     ? true
     : !hasSpeaker2;
@@ -199,10 +224,6 @@ async function cleanTranscriptFormatting(
   transcript: string,
   openAiKey: string,
 ) {
-  /*
-   * If there's virtually no transcript,
-   * don't spend another request formatting it.
-   */
   if (!transcript.trim()) {
     return transcript;
   }
@@ -236,18 +257,14 @@ async function cleanTranscriptFormatting(
 
               content: [
                 "You are formatting a word-for-word family interview transcript for archival preservation.",
-
                 "The transcript may contain labels such as Speaker 1: and Speaker 2:.",
                 "Keep every existing speaker label exactly where it belongs.",
                 "Do not rename the speakers.",
-
                 "Correct capitalization at the beginning of sentences.",
                 "Add or correct periods, commas, question marks, exclamation points, quotation marks, apostrophes, and other normal punctuation.",
                 "Correct spacing around punctuation.",
                 "Use paragraph breaks between speaker turns.",
-
                 "IMPORTANT: Every spoken word must remain exactly the same and in exactly the same order.",
-
                 "Do not replace words.",
                 "Do not rearrange words.",
                 "Do not add words.",
@@ -257,9 +274,7 @@ async function cleanTranscriptFormatting(
                 "Do not remove repeated words.",
                 "Do not summarize.",
                 "Do not rewrite awkward speech.",
-
                 "Only punctuation, capitalization, spacing, and paragraph breaks may change.",
-
                 "Return JSON only with transcript as a string.",
               ].join(" "),
             },
@@ -308,11 +323,6 @@ async function cleanTranscriptFormatting(
       return transcript;
     }
 
-    /*
-     * This is the critical protection:
-     * reject the cleaned version if even
-     * one spoken word changed.
-     */
     if (
       !hasTheSameWords(
         transcript,
@@ -326,10 +336,6 @@ async function cleanTranscriptFormatting(
       return transcript;
     }
 
-    /*
-     * If the source had speaker labels,
-     * make sure cleanup did not destroy them.
-     */
     if (
       /Speaker\s+1\s*:/i.test(
         transcript,
@@ -353,6 +359,57 @@ async function cleanTranscriptFormatting(
     );
 
     return transcript;
+  }
+}
+
+async function replaceTranscriptSegments(
+  db: D1Database,
+  trackId: string,
+  segments: TranscriptSegment[],
+) {
+  await db
+    .prepare(
+      `DELETE FROM transcript_segments
+       WHERE audio_track_id = ?`,
+    )
+    .bind(trackId)
+    .run();
+
+  if (!segments.length) {
+    return;
+  }
+
+  for (
+    let index = 0;
+    index < segments.length;
+    index += 1
+  ) {
+    const segment =
+      segments[index];
+
+    await db
+      .prepare(
+        `INSERT INTO transcript_segments (
+           id,
+           audio_track_id,
+           segment_index,
+           start_seconds,
+           end_seconds,
+           speaker_label,
+           text
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        trackId,
+        index,
+        segment.start,
+        segment.end,
+        segment.speaker,
+        segment.text,
+      )
+      .run();
   }
 }
 
@@ -415,9 +472,7 @@ export async function POST(
       .bind(trackId)
       .first<TrackRow>();
 
-    if (
-      !track?.storage_path
-    ) {
+    if (!track?.storage_path) {
       return Response.json(
         {
           error:
@@ -508,11 +563,6 @@ export async function POST(
       "auto",
     );
 
-    /*
-     * These recordings are English.
-     * Explicitly supplying the language
-     * can improve recognition accuracy.
-     */
     form.append(
       "language",
       "en",
@@ -556,26 +606,28 @@ export async function POST(
       );
     }
 
-    /*
-     * First create the protected
-     * word-for-word diarized transcript.
-     */
-    const rawTranscript =
-      formatSpeakerTranscript(
+    const segments =
+      usableSegments(
         responseBody,
       );
 
-    /*
-     * Then improve punctuation and
-     * capitalization. If any spoken word
-     * changes, this function automatically
-     * returns rawTranscript instead.
-     */
+    const rawTranscript =
+      formatSpeakerTranscript(
+        segments,
+        responseBody.text,
+      );
+
     const transcript =
       await cleanTranscriptFormatting(
         rawTranscript,
         openAiKey,
       );
+
+    await replaceTranscriptSegments(
+      db,
+      track.id,
+      segments,
+    );
 
     await db
       .prepare(
@@ -594,6 +646,7 @@ export async function POST(
 
     return Response.json({
       transcript,
+      segments,
     });
   } catch (error) {
     if (trackId) {
@@ -627,14 +680,14 @@ export async function POST(
       }
     }
 
-   return Response.json(
-  {
-    error:
-      error instanceof Error
-        ? error.message
-        : "The recording could not be transcribed.",
-  },
-  { status: 500 },
-);
+    return Response.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "The recording could not be transcribed.",
+      },
+      { status: 500 },
+    );
   }
 }
