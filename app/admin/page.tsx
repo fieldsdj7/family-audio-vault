@@ -116,6 +116,13 @@ const vaults: {
   },
 ];
 
+const categoryOptions = [
+  'General',
+  'Early Life',
+  'Mid Life',
+  'Later Life & Reflection',
+] as const;
+
 function vaultDisplayName(
   person: VaultPerson,
 ) {
@@ -910,6 +917,7 @@ export default function AdminUpload() {
   const [speaker1Name, setSpeaker1Name] = useState('');
   const [speaker2Name, setSpeaker2Name] = useState('');
   const [editorQuestionId, setEditorQuestionId] = useState('');
+  const [editorCategory, setEditorCategory] = useState('General');
 
   const [transcriptSegments, setTranscriptSegments] =
     useState<SavedTranscriptSegment[]>([]);
@@ -1035,6 +1043,7 @@ export default function AdminUpload() {
     setSpeaker1Name(track?.speaker_1_name || '');
     setSpeaker2Name(track?.speaker_2_name || '');
     setEditorQuestionId(track?.question_id || '');
+    setEditorCategory(track?.category || 'General');
   }
 
   async function fetchTracks(preferredId?: string) {
@@ -1547,6 +1556,31 @@ export default function AdminUpload() {
     setEditorMessage(null);
 
     try {
+      const changes: {
+        transcript: string;
+        storyTitle: string;
+        storyChapter: string;
+        speaker1Name: string;
+        speaker2Name: string;
+        questionId: string;
+        category?: string;
+      } = {
+        transcript: transcriptDraft,
+        storyTitle: storyTitleDraft,
+        storyChapter: storyDraft,
+        speaker1Name,
+        speaker2Name,
+        questionId: editorQuestionId,
+      };
+
+      if (
+        editorCategory !==
+        (selectedTrack.category || 'General')
+      ) {
+        changes.category =
+          editorCategory;
+      }
+
       const response = await fetch(
         `/api/cloudflare/recordings/${selectedTrack.id}`,
         {
@@ -1554,14 +1588,9 @@ export default function AdminUpload() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            transcript: transcriptDraft,
-            storyTitle: storyTitleDraft,
-            storyChapter: storyDraft,
-            speaker1Name,
-            speaker2Name,
-            questionId: editorQuestionId,
-          }),
+          body: JSON.stringify(
+            changes,
+          ),
         },
       );
 
@@ -1579,7 +1608,7 @@ export default function AdminUpload() {
       setEditorMessage({
         type: 'success',
         text:
-          'Story Question, speaker names, transcript, and story changes were saved.',
+          'Category, Story Question, speaker names, transcript, and story changes were saved.',
       });
 
       await fetchTracks(selectedTrack.id);
@@ -2145,7 +2174,7 @@ export default function AdminUpload() {
                 <div className="mb-1.5 flex items-center gap-2">
                   <Tag className="h-4 w-4 text-[#a66b27]" />
                   <label className="text-sm font-semibold">
-                    Chapter / category
+                    Book part
                   </label>
                 </div>
 
@@ -2156,13 +2185,16 @@ export default function AdminUpload() {
                   }
                   className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
                 >
-                  <option>General</option>
-                  <option>Childhood</option>
-                  <option>Love & Marriage</option>
-                  <option>Military & Work</option>
-                  <option>Faith</option>
-                  <option>Holidays & Family</option>
-                  <option>Life Lessons</option>
+                  {categoryOptions.map(
+                    (option) => (
+                      <option
+                        key={option}
+                        value={option}
+                      >
+                        {option}
+                      </option>
+                    ),
+                  )}
                 </select>
               </div>
             </div>
@@ -2391,6 +2423,54 @@ export default function AdminUpload() {
                       src={`/api/cloudflare/audio/${selectedTrack.id}`}
                       className="w-full"
                     />
+                  </div>
+
+                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                    <div className="flex items-center gap-2">
+                      <Tag className="h-4 w-4 text-[#a66b27]" />
+
+                      <p className="text-sm font-semibold">
+                        Book Part
+                      </p>
+                    </div>
+
+                    <p className="mt-1 text-sm text-stone-600">
+                      Choose the major life section this story belongs in.
+                      You can correct older category labels here.
+                    </p>
+
+                    <select
+                      value={editorCategory}
+                      onChange={(event) =>
+                        setEditorCategory(event.target.value)
+                      }
+                      className="mt-4 w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                    >
+                      {!categoryOptions.includes(
+                        editorCategory as
+                          (typeof categoryOptions)[number],
+                      ) && (
+                        <option value={editorCategory}>
+                          {editorCategory} — legacy category
+                        </option>
+                      )}
+
+                      {categoryOptions.map(
+                        (option) => (
+                          <option
+                            key={option}
+                            value={option}
+                          >
+                            {option}
+                          </option>
+                        ),
+                      )}
+                    </select>
+
+                    <p className="mt-2 text-xs text-stone-500">
+                      These are major book parts. Individual stories can
+                      still become separate chapters within each part.
+                    </p>
                   </div>
 
                   <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
@@ -2942,7 +3022,7 @@ export default function AdminUpload() {
 
                     {savingEditor
                       ? 'Saving changes…'
-                      : 'Save speaker names, transcript and story'}
+                      : 'Save category, speaker names, transcript and story'}
                   </button>
                 </>
               )}
