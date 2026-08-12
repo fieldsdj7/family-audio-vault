@@ -28,23 +28,27 @@ type BookStory = {
   photoCount: number;
   createdAt: string;
   updatedAt: string;
+  storedCategory: string | null;
 };
 
-type BookChapter = {
+type BookPart = {
   vaultPerson: VaultPerson;
+  partTitle: string;
   chapterTitle: string;
   stories: BookStory[];
 };
 
 type BookResponse = {
-  outline?: BookChapter[];
+  outline?: BookPart[];
 
   summary?: {
+    partCount: number;
     chapterCount: number;
     storyCount: number;
     approvedStoryCount: number;
     needsApprovalCount: number;
     photoCount: number;
+    legacyCategoryCount: number;
     readyToExport: boolean;
   };
 
@@ -81,7 +85,7 @@ export default function BookBuilderPage() {
   const [vaultPerson, setVaultPerson] =
     useState<VaultPerson>("Papa");
 
-  const [outline, setOutline] = useState<BookChapter[]>([]);
+  const [outline, setOutline] = useState<BookPart[]>([]);
 
   const [summary, setSummary] =
     useState<BookResponse["summary"]>(undefined);
@@ -94,7 +98,7 @@ export default function BookBuilderPage() {
   const [approvingId, setApprovingId] =
     useState<string | null>(null);
 
-  const [openChapters, setOpenChapters] = useState<
+  const [openParts, setOpenParts] = useState<
     Record<string, boolean>
   >({});
 
@@ -157,14 +161,14 @@ export default function BookBuilderPage() {
       setOutline(nextOutline);
       setSummary(data.summary);
 
-      setOpenChapters((current) => {
+      setOpenParts((current) => {
         const expanded = { ...current };
 
-        nextOutline.forEach((chapter) => {
+        nextOutline.forEach((part) => {
           if (
-            expanded[chapter.chapterTitle] === undefined
+            expanded[part.partTitle] === undefined
           ) {
-            expanded[chapter.chapterTitle] = true;
+            expanded[part.partTitle] = true;
           }
         });
 
@@ -241,8 +245,8 @@ export default function BookBuilderPage() {
     }
   }
 
-  function toggleChapter(title: string) {
-    setOpenChapters((current) => ({
+  function togglePart(title: string) {
+    setOpenParts((current) => ({
       ...current,
       [title]: !current[title],
     }));
@@ -307,8 +311,8 @@ export default function BookBuilderPage() {
           </h1>
 
           <p className="mt-3 max-w-3xl text-stone-600">
-            Review and approve the finished family stories as they
-            will be organized into each legacy book.
+            Review and approve finished family stories, organized
+            first by major book part and then as individual candidate chapters.
           </p>
         </header>
 
@@ -402,22 +406,22 @@ export default function BookBuilderPage() {
               </div>
 
               {summary && (
-                <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                   <div className="rounded-2xl bg-stone-100 p-4">
                     <p className="text-2xl font-semibold">
-                      {summary.chapterCount}
+                      {summary.partCount}
                     </p>
                     <p className="text-xs text-stone-600">
-                      Chapters
+                      Book parts
                     </p>
                   </div>
 
                   <div className="rounded-2xl bg-stone-100 p-4">
                     <p className="text-2xl font-semibold">
-                      {summary.storyCount}
+                      {summary.chapterCount}
                     </p>
                     <p className="text-xs text-stone-600">
-                      Stories
+                      Candidate chapters
                     </p>
                   </div>
 
@@ -447,6 +451,38 @@ export default function BookBuilderPage() {
                       Photos
                     </p>
                   </div>
+
+                  <div className="rounded-2xl bg-stone-100 p-4">
+                    <p className="text-2xl font-semibold">
+                      {summary.legacyCategoryCount}
+                    </p>
+                    <p className="text-xs text-stone-600">
+                      Legacy categories
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {summary &&
+              summary.legacyCategoryCount > 0 && (
+                <div className="mt-5 flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+
+                  <div>
+                    <p className="font-semibold">
+                      {summary.legacyCategoryCount}{" "}
+                      {summary.legacyCategoryCount === 1
+                        ? "story still has"
+                        : "stories still have"}{" "}
+                      an old category.
+                    </p>
+
+                    <p className="mt-1">
+                      Those stories appear under General until you
+                      assign Early Life, Mid Life, or Later Life &
+                      Reflection in Story Studio.
+                    </p>
+                  </div>
                 </div>
               )}
             </section>
@@ -466,38 +502,38 @@ export default function BookBuilderPage() {
               </section>
             ) : (
               <section className="mt-8 space-y-6">
-                {outline.map((chapter, chapterIndex) => {
+                {outline.map((part, partIndex) => {
                   const open =
-                    openChapters[chapter.chapterTitle] ?? true;
+                    openParts[part.partTitle] ?? true;
 
                   return (
                     <div
-                      key={`${chapter.vaultPerson}-${chapter.chapterTitle}`}
+                      key={`${part.vaultPerson}-${part.partTitle}`}
                       className="overflow-hidden rounded-3xl border border-stone-300 bg-[#fffaf0] shadow-sm"
                     >
                       <button
                         type="button"
                         onClick={() =>
-                          toggleChapter(chapter.chapterTitle)
+                          togglePart(part.partTitle)
                         }
                         className="flex w-full items-center gap-4 border-b border-stone-200 px-6 py-5 text-left md:px-8"
                       >
                         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e8d4ae] font-serif text-[#76502a]">
-                          {chapterIndex + 1}
+                          {partIndex + 1}
                         </span>
 
                         <span className="min-w-0 flex-1">
                           <span className="block text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">
-                            Chapter {chapterIndex + 1}
+                            Part {partIndex + 1}
                           </span>
 
                           <span className="mt-1 block font-serif text-2xl text-stone-900">
-                            {chapter.chapterTitle}
+                            {part.partTitle}
                           </span>
 
                           <span className="mt-1 block text-sm text-stone-500">
-                            {chapter.stories.length}{" "}
-                            {chapter.stories.length === 1
+                            {part.stories.length}{" "}
+                            {part.stories.length === 1
                               ? "story"
                               : "stories"}
                           </span>
@@ -512,7 +548,7 @@ export default function BookBuilderPage() {
 
                       {open && (
                         <div className="space-y-6 p-6 md:p-8">
-                          {chapter.stories.map((story, storyIndex) => (
+                          {part.stories.map((story, storyIndex) => (
                             <article
                               key={story.id}
                               className="rounded-2xl border border-stone-200 bg-white p-5 md:p-6"
@@ -520,7 +556,7 @@ export default function BookBuilderPage() {
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                   <p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">
-                                    Story {storyIndex + 1}
+                                    Candidate Chapter {storyIndex + 1}
                                   </p>
 
                                   <h3 className="mt-2 font-serif text-2xl text-stone-900">
@@ -557,6 +593,18 @@ export default function BookBuilderPage() {
                                     <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-700">
                                       <ImageIcon className="h-3.5 w-3.5" />
                                       {story.photoCount}
+                                    </span>
+                                  )}
+
+                                  {story.storedCategory &&
+                                  ![
+                                    "General",
+                                    "Early Life",
+                                    "Mid Life",
+                                    "Later Life & Reflection",
+                                  ].includes(story.storedCategory) && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-900">
+                                      Old category: {story.storedCategory}
                                     </span>
                                   )}
                                 </div>
