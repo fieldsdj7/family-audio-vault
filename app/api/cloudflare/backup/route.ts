@@ -50,9 +50,14 @@ type BackupRecordRequest = {
   backupSizeBytes?: number;
 };
 
-export async function GET(request: Request) {
+export async function GET(
+  request: Request,
+) {
   try {
-    const member = await requireVaultMember(request);
+    const member =
+      await requireVaultMember(
+        request,
+      );
 
     if (!member.isAdmin) {
       return Response.json(
@@ -64,7 +69,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const { db } = await getVaultBindings();
+    const { db } =
+      await getVaultBindings();
 
     const [
       tracksResult,
@@ -103,7 +109,10 @@ export async function GET(request: Request) {
         .prepare(
           `SELECT *
            FROM story_photos
-           ORDER BY audio_track_id ASC, sort_order ASC, created_at ASC`,
+           ORDER BY
+             audio_track_id ASC,
+             sort_order ASC,
+             created_at ASC`,
         )
         .all<PhotoRow>(),
 
@@ -119,7 +128,9 @@ export async function GET(request: Request) {
         .prepare(
           `SELECT *
            FROM vault_access
-           ORDER BY member_email ASC, vault_person ASC`,
+           ORDER BY
+             member_email ASC,
+             vault_person ASC`,
         )
         .all(),
 
@@ -127,75 +138,116 @@ export async function GET(request: Request) {
         .prepare(
           `SELECT *
            FROM vault_backup_history
-           ORDER BY created_at ASC, id ASC`,
+           ORDER BY
+             created_at ASC,
+             id ASC`,
         )
         .all(),
     ]);
 
-    const tracks = tracksResult.results;
-    const photos = photosResult.results;
+    const tracks =
+      tracksResult.results;
 
-    const audioFiles = tracks
-      .filter(
-        (track) =>
-          !!track.storage_path?.trim() &&
-          track.is_split_master === 0,
-      )
-      .map((track) => ({
-        trackId: track.id,
-        title: track.title,
-        storagePath:
-          track.storage_path as string,
-        downloadUrl: `/api/cloudflare/audio/${track.id}`,
-      }));
+    const photos =
+      photosResult.results;
 
-    const photoFiles = photos.map(
-      (photo) => ({
-        photoId: photo.id,
-        audioTrackId:
-          photo.audio_track_id,
-        storagePath:
-          photo.storage_path,
-        caption:
-          photo.caption,
-        sortOrder:
-          photo.sort_order,
-      }),
-    );
+    const audioFiles =
+      tracks
+        .filter(
+          (track) =>
+            !!track.storage_path?.trim() &&
+            track.is_split_master === 0,
+        )
+        .map((track) => ({
+          trackId:
+            track.id,
+
+          title:
+            track.title,
+
+          storagePath:
+            track.storage_path as string,
+
+          downloadUrl:
+            `/api/cloudflare/audio/${track.id}`,
+        }));
+
+    const photoFiles =
+      photos.map(
+        (photo) => ({
+          photoId:
+            photo.id,
+
+          audioTrackId:
+            photo.audio_track_id,
+
+          storagePath:
+            photo.storage_path,
+
+          downloadUrl:
+            `/api/cloudflare/photo/${photo.id}`,
+
+          caption:
+            photo.caption,
+
+          sortOrder:
+            photo.sort_order,
+        }),
+      );
 
     return Response.json({
       createdAt:
         new Date().toISOString(),
-      createdBy: member.email,
+
+      createdBy:
+        member.email,
 
       metadata: {
-        audioTracks: tracks,
+        audioTracks:
+          tracks,
+
         audioTrackReviews:
           reviewsResult.results,
+
         questions:
           questionsResult.results,
-        storyPhotos: photos,
+
+        storyPhotos:
+          photos,
+
         vaultMembers:
           membersResult.results,
+
         vaultAccess:
           accessResult.results,
+
         backupHistory:
           backupsResult.results,
       },
 
       files: {
-        audio: audioFiles,
-        photos: photoFiles,
+        audio:
+          audioFiles,
+
+        photos:
+          photoFiles,
       },
     });
   } catch (error) {
-    return vaultAccessResponse(error);
+    return vaultAccessResponse(
+      error,
+    );
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+) {
   try {
-    const member = await requireVaultMember(request);
+    const member =
+      await requireVaultMember(
+        request,
+      );
 
     if (!member.isAdmin) {
       return Response.json(
@@ -208,25 +260,42 @@ export async function POST(request: Request) {
     }
 
     const body =
-      (await request.json()) as BackupRecordRequest;
+      (await request.json()) as
+        BackupRecordRequest;
 
     const recordingCount =
-      Number(body.recordingCount);
+      Number(
+        body.recordingCount,
+      );
 
     const audioFileCount =
-      Number(body.audioFileCount);
+      Number(
+        body.audioFileCount,
+      );
 
     const missingAudioCount =
-      Number(body.missingAudioCount);
+      Number(
+        body.missingAudioCount,
+      );
 
     const backupSizeBytes =
-      Number(body.backupSizeBytes);
+      Number(
+        body.backupSizeBytes,
+      );
 
     if (
-      !Number.isFinite(recordingCount) ||
-      !Number.isFinite(audioFileCount) ||
-      !Number.isFinite(missingAudioCount) ||
-      !Number.isFinite(backupSizeBytes) ||
+      !Number.isFinite(
+        recordingCount,
+      ) ||
+      !Number.isFinite(
+        audioFileCount,
+      ) ||
+      !Number.isFinite(
+        missingAudioCount,
+      ) ||
+      !Number.isFinite(
+        backupSizeBytes,
+      ) ||
       recordingCount < 0 ||
       audioFileCount < 0 ||
       missingAudioCount < 0 ||
@@ -258,20 +327,32 @@ export async function POST(request: Request) {
         )
         .bind(
           member.email,
-          Math.floor(recordingCount),
-          Math.floor(audioFileCount),
-          Math.floor(missingAudioCount),
-          Math.floor(backupSizeBytes),
+          Math.floor(
+            recordingCount,
+          ),
+          Math.floor(
+            audioFileCount,
+          ),
+          Math.floor(
+            missingAudioCount,
+          ),
+          Math.floor(
+            backupSizeBytes,
+          ),
         )
         .run();
 
     return Response.json({
       success: true,
+
       backupId:
-        result.meta.last_row_id ??
+        result.meta
+          .last_row_id ??
         null,
     });
   } catch (error) {
-    return vaultAccessResponse(error);
+    return vaultAccessResponse(
+      error,
+    );
   }
 }
