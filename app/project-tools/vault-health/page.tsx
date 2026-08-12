@@ -114,6 +114,7 @@ type BackupManifest = {
       photoId: string;
       audioTrackId: string;
       storagePath: string;
+      downloadUrl: string;
       caption: string | null;
       sortOrder: number;
     }>;
@@ -535,15 +536,6 @@ export default function VaultHealthPage() {
         );
       }
 
-      if (
-        manifest.files.photos.length >
-        0
-      ) {
-        throw new Error(
-          'This Vault contains story photos. Photo-file backup support must be enabled before a complete backup can be created.',
-        );
-      }
-
       const zipChunks:
         Uint8Array[] = [];
 
@@ -618,6 +610,10 @@ export default function VaultHealthPage() {
           '',
           'stories/',
           '  Readable family-story files organized by family member.',
+          '',
+          'photos/',
+          '  Story photos organized by family member and source recording.',
+          '  Captions are preserved in caption text files and metadata/story_photos.json.',
           '',
           'metadata/',
           '  Complete database information in JSON format.',
@@ -918,6 +914,155 @@ export default function VaultHealthPage() {
           1;
       }
 
+      const seenPhotos =
+        new Set<string>();
+
+      let includedPhotos =
+        0;
+
+      const missingPhotos:
+        string[] = [];
+
+      for (
+        let index = 0;
+        index <
+        manifest.files.photos
+          .length;
+        index += 1
+      ) {
+        const photo =
+          manifest.files.photos[
+            index
+          ];
+
+        if (
+          seenPhotos.has(
+            photo.storagePath,
+          )
+        ) {
+          continue;
+        }
+
+        seenPhotos.add(
+          photo.storagePath,
+        );
+
+        const photoTrack =
+          tracks.find(
+            (track) =>
+              track.id ===
+              photo.audioTrackId,
+          );
+
+        const photoVaultFolder =
+          vaultFolderName(
+            photoTrack
+              ?.vault_person,
+          );
+
+        const sourceTitle =
+          safeFilePart(
+            photoTrack?.title ||
+              photo.audioTrackId,
+          );
+
+        const sourceDate =
+          photoTrack
+            ? new Date(
+                photoTrack.created_at,
+              )
+            : null;
+
+        const sourceDatePart =
+          sourceDate &&
+          !Number.isNaN(
+            sourceDate.getTime(),
+          )
+            ? sourceDate
+                .toISOString()
+                .slice(0, 10)
+            : 'unknown-date';
+
+        const storyFolder =
+          `${sourceDatePart}-${sourceTitle}`;
+
+        setBackupProgress(
+          `Downloading photo ${
+            index + 1
+          } of ${
+            manifest.files
+              .photos.length
+          }…`,
+        );
+
+        const response =
+          await fetch(
+            photo.downloadUrl,
+            {
+              cache:
+                'no-store',
+            },
+          );
+
+        if (!response.ok) {
+          missingPhotos.push(
+            `${photo.photoId} | ${photo.audioTrackId} | ${photo.storagePath}`,
+          );
+
+          continue;
+        }
+
+        const extension =
+          fileExtension(
+            photo.storagePath,
+            'jpg',
+          );
+
+        const photoNumber =
+          String(
+            photo.sortOrder + 1,
+          ).padStart(
+            2,
+            '0',
+          );
+
+        const captionPart =
+          photo.caption?.trim()
+            ? `-${safeFilePart(
+                photo.caption,
+              ).slice(0, 55)}`
+            : '';
+
+        const photoName =
+          `${photoNumber}${captionPart}.${extension}`;
+
+        await addResponseToZip(
+          zip,
+          `photos/${photoVaultFolder}/${storyFolder}/${photoName}`,
+          response,
+        );
+
+        addTextFile(
+          zip,
+          `photos/${photoVaultFolder}/${storyFolder}/${photoNumber}-caption.txt`,
+          [
+            `Photo ID: ${photo.photoId}`,
+            `Source recording ID: ${photo.audioTrackId}`,
+            `Source recording: ${
+              photoTrack?.title ||
+              'Unknown'
+            }`,
+            `Sort order: ${photo.sortOrder}`,
+            '',
+            photo.caption?.trim() ||
+              '[No caption saved]',
+          ].join('\n'),
+        );
+
+        includedPhotos +=
+          1;
+      }
+
       addTextFile(
         zip,
         'metadata/backup-report.json',
@@ -933,7 +1078,8 @@ export default function VaultHealthPage() {
               includedAudio,
             missingAudio,
             photoFilesIncluded:
-              0,
+              includedPhotos,
+            missingPhotos,
           },
           null,
           2,
@@ -942,7 +1088,9 @@ export default function VaultHealthPage() {
 
       if (
         missingAudio.length >
-        0
+          0 ||
+        missingPhotos.length >
+          0
       ) {
         addTextFile(
           zip,
@@ -950,12 +1098,20 @@ export default function VaultHealthPage() {
           [
             'FIELDS FAMILY VAULT — MISSING FILE REPORT',
             '',
-            'The database information for these recordings is included,',
-            'but the corresponding audio file could not be downloaded.',
+            'Database metadata is included for the items below,',
+            'but the corresponding stored file could not be downloaded.',
             '',
             'MISSING AUDIO',
             '',
-            ...missingAudio,
+            ...(missingAudio.length
+              ? missingAudio
+              : ['None']),
+            '',
+            'MISSING PHOTOS',
+            '',
+            ...(missingPhotos.length
+              ? missingPhotos
+              : ['None']),
           ].join('\n'),
         );
       }
@@ -1057,13 +1213,13 @@ export default function VaultHealthPage() {
         setMessage({
           type: 'success',
           text:
-            `Full Vault backup created successfully. ${includedAudio} audio files were included and the backup was added to Backup History.`,
+            `Full Vault backup created successfully. ${includedAudio} audio files and ${includedPhotos} photos were included, and the backup was added to Backup History.`,
         });
       } else {
         setMessage({
           type: 'success',
           text:
-            `The full Vault backup downloaded successfully with ${includedAudio} audio files, but its Backup History entry could not be recorded.`,
+            `The full Vault backup downloaded successfully with ${includedAudio} audio files and ${includedPhotos} photos, but its Backup History entry could not be recorded.`,
         });
       }
     } catch (error) {
