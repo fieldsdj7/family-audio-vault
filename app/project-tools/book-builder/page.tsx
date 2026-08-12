@@ -26,6 +26,11 @@ type BookStory = {
   story: string;
   approvedAt: string | null;
   photoCount: number;
+  photos: Array<{
+    id: string;
+    caption: string | null;
+    sortOrder: number;
+  }>;
   createdAt: string;
   updatedAt: string;
   storedCategory: string | null;
@@ -615,6 +620,45 @@ export default function BookBuilderPage() {
                                   {story.story}
                                 </p>
                               </div>
+
+                              {story.photos.length > 0 && (
+                                <div className="mt-6 border-t border-stone-200 pt-5">
+                                  <div className="flex items-center gap-2">
+                                    <ImageIcon className="h-4 w-4 text-[#a66b27]" />
+
+                                    <p className="text-sm font-semibold text-stone-800">
+                                      Story Photos
+                                    </p>
+                                  </div>
+
+                                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                                    {story.photos.map((photo, photoIndex) => (
+                                      <figure
+                                        key={photo.id}
+                                        className="overflow-hidden rounded-2xl border border-stone-200 bg-[#fffaf0]"
+                                      >
+                                        <div className="flex min-h-52 items-center justify-center bg-stone-100">
+                                          <img
+                                            src={`/api/cloudflare/photo/${photo.id}`}
+                                            alt={
+                                              photo.caption?.trim() ||
+                                              `${story.storyTitle} photo ${photoIndex + 1}`
+                                            }
+                                            loading="lazy"
+                                            className="max-h-80 w-full object-contain"
+                                          />
+                                        </div>
+
+                                        {photo.caption?.trim() && (
+                                          <figcaption className="border-t border-stone-200 px-4 py-3 text-sm leading-relaxed text-stone-600">
+                                            {photo.caption}
+                                          </figcaption>
+                                        )}
+                                      </figure>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
 
                               <div className="mt-6 flex flex-wrap gap-3">
                                 {!story.approvedAt && (
