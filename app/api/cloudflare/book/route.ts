@@ -16,9 +16,15 @@ type BookStoryRow = {
   story_title: string | null;
   story_chapter: string;
   story_approved_at: string | null;
-  photo_count: number;
   created_at: string;
   updated_at: string;
+};
+
+type PhotoRow = {
+  id: string;
+  audio_track_id: string;
+  caption: string | null;
+  sort_order: number;
 };
 
 type BookPartTitle =
@@ -65,15 +71,6 @@ function bookPartForCategory(
     return "Later Life & Reflection";
   }
 
-  /*
-   * General is the fallback.
-   *
-   * Older legacy categories such as Childhood,
-   * Military & Work, Faith, etc. are not changed
-   * in the database. Until they are manually
-   * reassigned in Story Studio, Book Builder
-   * places them under General.
-   */
   return "General";
 }
 
@@ -152,7 +149,6 @@ export async function GET(
            tracks.story_title,
            tracks.story_chapter,
            reviews.story_approved_at,
-           COUNT(photos.id) AS photo_count,
            tracks.created_at,
            tracks.updated_at
          FROM audio_tracks AS tracks
@@ -160,8 +156,6 @@ export async function GET(
            ON questions.id = tracks.question_id
          LEFT JOIN audio_track_reviews AS reviews
            ON reviews.audio_track_id = tracks.id
-         LEFT JOIN story_photos AS photos
-           ON photos.audio_track_id = tracks.id
          WHERE tracks.trashed_at IS NULL
            AND tracks.is_split_master = 0
            AND length(
@@ -173,19 +167,6 @@ export async function GET(
              )
            ) > 0
            ${vaultFilter}
-         GROUP BY
-           tracks.id,
-           tracks.title,
-           tracks.speaker,
-           tracks.category,
-           tracks.vault_person,
-           questions.question_number,
-           questions.question_text,
-           tracks.story_title,
-           tracks.story_chapter,
-           reviews.story_approved_at,
-           tracks.created_at,
-           tracks.updated_at
          ORDER BY
            CASE tracks.vault_person
              WHEN 'Papa' THEN 1
@@ -205,6 +186,75 @@ export async function GET(
             .all<BookStoryRow>()
         : await statement
             .all<BookStoryRow>();
+
+    const storyIds =
+      stories.results.map(
+        (story) =>
+          story.id,
+      );
+
+    const photosByTrack =
+      new Map<
+        string,
+        Array<{
+          id: string;
+          caption: string | null;
+          sortOrder: number;
+        }>
+      >();
+
+    if (storyIds.length) {
+      const placeholders =
+        storyIds
+          .map(() => "?")
+          .join(", ");
+
+      const photoRows =
+        await db
+          .prepare(
+            `SELECT
+               id,
+               audio_track_id,
+               caption,
+               sort_order
+             FROM story_photos
+             WHERE audio_track_id IN (${placeholders})
+             ORDER BY
+               audio_track_id,
+               sort_order,
+               created_at`,
+          )
+          .bind(
+            ...storyIds,
+          )
+          .all<PhotoRow>();
+
+      for (
+        const photo of
+        photoRows.results
+      ) {
+        const current =
+          photosByTrack.get(
+            photo.audio_track_id,
+          ) || [];
+
+        current.push({
+          id:
+            photo.id,
+
+          caption:
+            photo.caption,
+
+          sortOrder:
+            photo.sort_order,
+        });
+
+        photosByTrack.set(
+          photo.audio_track_id,
+          current,
+        );
+      }
+    }
 
     const parts =
       new Map<
@@ -229,6 +279,13 @@ export async function GET(
               | string
               | null;
             photoCount: number;
+            photos: Array<{
+              id: string;
+              caption:
+                | string
+                | null;
+              sortOrder: number;
+            }>;
             createdAt: string;
             updatedAt: string;
             storedCategory:
@@ -257,17 +314,16 @@ export async function GET(
 
           partTitle,
 
-          /*
-           * Keep chapterTitle temporarily for
-           * compatibility with the current
-           * Book Builder page. The page will
-           * be updated next to use partTitle.
-           */
           chapterTitle:
             partTitle,
 
           stories: [],
         };
+
+      const photos =
+        photosByTrack.get(
+          story.id,
+        ) || [];
 
       part.stories.push({
         id:
@@ -276,11 +332,6 @@ export async function GET(
         recordingTitle:
           story.title,
 
-        /*
-         * Each story title is now the
-         * candidate chapter title inside
-         * its major book part.
-         */
         storyTitle:
           story.story_title
             ?.trim() ||
@@ -302,9 +353,9 @@ export async function GET(
           story.story_approved_at,
 
         photoCount:
-          Number(
-            story.photo_count,
-          ) || 0,
+          photos.length,
+
+        photos,
 
         createdAt:
           story.created_at,
@@ -312,12 +363,6 @@ export async function GET(
         updatedAt:
           story.updated_at,
 
-        /*
-         * Preserve the actual database
-         * category so the UI can identify
-         * old legacy labels that still
-         * need manual cleanup.
-         */
         storedCategory:
           story.category,
       });
@@ -375,17 +420,16 @@ export async function GET(
       ).length;
 
     const photoCount =
-      stories.results.reduce(
-        (
-          total,
-          story,
-        ) =>
-          total +
-          (Number(
-            story.photo_count,
-          ) || 0),
-        0,
-      );
+      [...photosByTrack.values()]
+        .reduce(
+          (
+            total,
+            photos,
+          ) =>
+            total +
+            photos.length,
+          0,
+        );
 
     const legacyCategoryCount =
       stories.results.filter(
@@ -411,19 +455,9 @@ export async function GET(
       outline,
 
       summary: {
-        /*
-         * A Book Part is now different
-         * from a chapter.
-         */
         partCount:
           outline.length,
 
-        /*
-         * Each completed story is currently
-         * a candidate chapter. Later, Book
-         * Builder can combine or reorganize
-         * these during manuscript creation.
-         */
         chapterCount:
           stories.results.length,
 
