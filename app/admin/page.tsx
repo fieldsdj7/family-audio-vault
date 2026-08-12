@@ -79,6 +79,12 @@ type TranscriptSegment = {
   text: string;
 };
 
+type KnownSpeakerReference = {
+  sourceSpeaker: string;
+  stableName: string;
+  file: File;
+};
+
 type SavedTranscriptSegment = {
   id: string;
   segment_index: number;
@@ -394,6 +400,101 @@ function createMonoTranscriptionWav(
   );
 }
 
+function buildKnownSpeakerReferences(
+  buffer: AudioBuffer,
+  chunkStartSeconds: number,
+  segments: TranscriptSegment[],
+) {
+  const firstSeenSpeakers = [
+    ...new Set(
+      segments
+        .map((segment) => segment.speaker)
+        .filter(
+          (
+            speaker,
+          ): speaker is string =>
+            Boolean(speaker),
+        ),
+    ),
+  ].slice(0, 4);
+
+  const references: KnownSpeakerReference[] = [];
+
+  for (
+    let index = 0;
+    index < firstSeenSpeakers.length;
+    index += 1
+  ) {
+    const sourceSpeaker =
+      firstSeenSpeakers[index];
+
+    const candidates =
+      segments
+        .filter(
+          (segment) =>
+            segment.speaker ===
+              sourceSpeaker &&
+            Number.isFinite(
+              segment.start,
+            ) &&
+            Number.isFinite(
+              segment.end,
+            ) &&
+            segment.end -
+              segment.start >=
+              2,
+        )
+        .sort(
+          (a, b) =>
+            b.end -
+            b.start -
+            (a.end -
+              a.start),
+        );
+
+    const best =
+      candidates[0];
+
+    if (!best) {
+      continue;
+    }
+
+    const referenceStart =
+      chunkStartSeconds +
+      best.start;
+
+    const referenceEnd =
+      Math.min(
+        chunkStartSeconds +
+          best.end,
+        referenceStart + 8,
+      );
+
+    if (
+      referenceEnd -
+        referenceStart <
+      2
+    ) {
+      continue;
+    }
+
+    references.push({
+      sourceSpeaker,
+      stableName:
+        `Speaker ${index + 1}`,
+      file:
+        createMonoTranscriptionWav(
+          buffer,
+          referenceStart,
+          referenceEnd,
+          100 + index + 1,
+        ),
+    });
+  }
+
+  return references;
+}
+
 async function transcribeLongRecording(
   trackId: string,
   onProgress: (message: string) => void,
@@ -457,6 +558,9 @@ async function transcribeLongRecording(
     const combinedSegments: TranscriptSegment[] =
       [];
 
+    let knownSpeakerReferences: KnownSpeakerReference[] =
+      [];
+
     const totalChunks =
       boundaries.length - 1;
 
@@ -494,6 +598,27 @@ async function transcribeLongRecording(
         chunk,
       );
 
+      if (
+        index > 0 &&
+        knownSpeakerReferences.length
+      ) {
+        for (
+          const reference of
+          knownSpeakerReferences
+        ) {
+          form.append(
+            'knownSpeakerName',
+            reference.stableName,
+          );
+
+          form.append(
+            'knownSpeakerReference',
+            reference.file,
+            reference.file.name,
+          );
+        }
+      }
+
       const response =
         await fetch(
           '/api/cloudflare/transcribe-chunk',
@@ -527,6 +652,28 @@ async function transcribeLongRecording(
       const chunkStart =
         boundaries[index];
 
+      if (
+        index === 0 &&
+        result.segments?.length
+      ) {
+        knownSpeakerReferences =
+          buildKnownSpeakerReferences(
+            decoded,
+            chunkStart,
+            result.segments,
+          );
+      }
+
+      const firstChunkSpeakerMap =
+        new Map(
+          knownSpeakerReferences.map(
+            (reference) => [
+              reference.sourceSpeaker,
+              reference.stableName,
+            ],
+          ),
+        );
+
       for (
         const segment of
         result.segments || []
@@ -551,8 +698,14 @@ async function transcribeLongRecording(
             chunkStart +
             segment.end,
           speaker:
-            segment.speaker ||
-            null,
+            index === 0 &&
+            segment.speaker
+              ? firstChunkSpeakerMap.get(
+                  segment.speaker,
+                ) ||
+                segment.speaker
+              : segment.speaker ||
+                null,
           text:
             segment.text.trim(),
         });
