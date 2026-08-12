@@ -12,6 +12,13 @@ type RecordingRow = {
   id: string;
 };
 
+const ALLOWED_CATEGORIES = new Set([
+  "General",
+  "Early Life",
+  "Mid Life",
+  "Later Life & Reflection",
+]);
+
 function optionalText(value: unknown) {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -59,6 +66,7 @@ export async function PATCH(
         speaker1Name?: unknown;
         speaker2Name?: unknown;
         questionId?: unknown;
+        category?: unknown;
       };
 
     const transcript =
@@ -79,6 +87,9 @@ export async function PATCH(
     const questionId =
       optionalText(body.questionId);
 
+    const category =
+      optionalText(body.category);
+
     if (
       (body.transcript !== undefined &&
         transcript === undefined) ||
@@ -91,12 +102,14 @@ export async function PATCH(
       (body.speaker2Name !== undefined &&
         speaker2Name === undefined) ||
       (body.questionId !== undefined &&
-        questionId === undefined)
+        questionId === undefined) ||
+      (body.category !== undefined &&
+        category === undefined)
     ) {
       return Response.json(
         {
           error:
-            "Transcript, story, speaker names, and question ID must be text.",
+            "Transcript, story, speaker names, question ID, and category must be text.",
         },
         { status: 400 },
       );
@@ -108,7 +121,8 @@ export async function PATCH(
       storyChapter === undefined &&
       speaker1Name === undefined &&
       speaker2Name === undefined &&
-      questionId === undefined
+      questionId === undefined &&
+      category === undefined
     ) {
       return Response.json(
         {
@@ -153,6 +167,22 @@ export async function PATCH(
         {
           error:
             "Speaker 2 name is too long.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      category !== undefined &&
+      category !== null &&
+      !ALLOWED_CATEGORIES.has(
+        category,
+      )
+    ) {
+      return Response.json(
+        {
+          error:
+            "Choose General, Early Life, Mid Life, or Later Life & Reflection.",
         },
         { status: 400 },
       );
@@ -282,6 +312,18 @@ export async function PATCH(
       );
 
       values.push(questionId);
+    }
+
+    if (
+      category !== undefined
+    ) {
+      assignments.push(
+        "category = ?",
+      );
+
+      values.push(
+        category || "General",
+      );
     }
 
     assignments.push(
