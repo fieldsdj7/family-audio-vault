@@ -1,6 +1,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
+  getVaultBindings,
   requireVaultMember,
 } from "../../../../lib/cloudflare";
 
@@ -36,6 +37,17 @@ type TranscriptSegment = {
   text: string;
 };
 
+type VoiceReferenceRow = {
+  display_name: string;
+  storage_path: string;
+  mime_type: string;
+};
+
+type KnownSpeaker = {
+  name: string;
+  dataUrl: string;
+};
+
 function usableSegments(
   response: DiarizedTranscription,
 ): TranscriptSegment[] {
@@ -48,32 +60,23 @@ function usableSegments(
         end: number;
         text: string;
       } =>
-        Number.isFinite(
-          segment.start,
-        ) &&
-        Number.isFinite(
-          segment.end,
-        ) &&
-        Boolean(
-          segment.text?.trim(),
-        ),
+        Number.isFinite(segment.start) &&
+        Number.isFinite(segment.end) &&
+        Boolean(segment.text?.trim()),
     )
     .map((segment) => ({
-      start:
-        segment.start,
-      end:
-        segment.end,
+      start: segment.start,
+      end: segment.end,
       speaker:
-        segment.speaker?.trim() ||
-        null,
-      text:
-        segment.text.trim(),
+        segment.speaker?.trim() || null,
+      text: segment.text.trim(),
     }));
 }
 
 function formatSpeakerTranscript(
   segments: TranscriptSegment[],
   fallbackText: string,
+  knownSpeakerNames: string[],
 ) {
   if (!segments.length) {
     return fallbackText.trim();
@@ -82,10 +85,7 @@ function formatSpeakerTranscript(
   const speakerIds = [
     ...new Set(
       segments
-        .map(
-          (segment) =>
-            segment.speaker,
-        )
+        .map((segment) => segment.speaker)
         .filter(
           (
             speaker,
@@ -107,14 +107,14 @@ function formatSpeakerTranscript(
       .trim();
   }
 
-  /*
-   * Known speaker references come back from OpenAI
-   * using the names we supplied, such as "Speaker 1"
-   * and "Speaker 2". Preserve those numbers exactly.
-   *
-   * Any unidentified A/B/C-style speakers are assigned
-   * the next unused Speaker number.
-   */
+  const knownSet =
+    new Set(
+      knownSpeakerNames.map(
+        (name) =>
+          name.toLocaleLowerCase(),
+      ),
+    );
+
   const speakerNumbers =
     new Map<string, number>();
 
@@ -152,6 +152,9 @@ function formatSpeakerTranscript(
     const speaker of speakerIds
   ) {
     if (
+      knownSet.has(
+        speaker.toLocaleLowerCase(),
+      ) ||
       speakerNumbers.has(
         speaker,
       )
@@ -210,6 +213,14 @@ function formatSpeakerTranscript(
     .map((turn) => {
       if (!turn.speaker) {
         return turn.text;
+      }
+
+      if (
+        knownSet.has(
+          turn.speaker.toLocaleLowerCase(),
+        )
+      ) {
+        return `${turn.speaker}: ${turn.text}`;
       }
 
       const number =
@@ -272,6 +283,72 @@ async function fileToDataUrl(
   )}`;
 }
 
+async function loadSavedVoiceReferences() {
+  const {
+    db,
+    files,
+  } =
+    await getVaultBindings();
+
+  const rows =
+    await db
+      .prepare(
+        `SELECT
+           display_name,
+           storage_path,
+           mime_type
+         FROM voice_references
+         ORDER BY display_name COLLATE NOCASE ASC
+         LIMIT ?`,
+      )
+      .bind(
+        MAX_KNOWN_SPEAKERS,
+      )
+      .all<VoiceReferenceRow>();
+
+  const speakers: KnownSpeaker[] =
+    [];
+
+  for (
+    const row of rows.results
+  ) {
+    const object =
+      await files.get(
+        row.storage_path,
+      );
+
+    if (!object) {
+      console.warn(
+        `Voice reference file is missing for ${row.display_name}.`,
+      );
+
+      continue;
+    }
+
+    const bytes =
+      new Uint8Array(
+        await object.arrayBuffer(),
+      );
+
+    const contentType =
+      row.mime_type ||
+      object.httpMetadata
+        ?.contentType ||
+      "audio/wav";
+
+    speakers.push({
+      name:
+        row.display_name,
+      dataUrl:
+        `data:${contentType};base64,${bytesToBase64(
+          bytes,
+        )}`,
+    });
+  }
+
+  return speakers;
+}
+
 export async function POST(
   request: Request,
 ) {
@@ -323,7 +400,7 @@ export async function POST(
       );
     }
 
-    const knownSpeakerNames =
+    const suppliedNames =
       form
         .getAll(
           "knownSpeakerName",
@@ -333,7 +410,7 @@ export async function POST(
             value,
           ): value is string =>
             typeof value ===
-            "string" &&
+              "string" &&
             Boolean(
               value.trim(),
             ),
@@ -342,7 +419,7 @@ export async function POST(
           value.trim(),
         );
 
-    const knownSpeakerReferences =
+    const suppliedReferences =
       form
         .getAll(
           "knownSpeakerReference",
@@ -356,8 +433,8 @@ export async function POST(
         );
 
     if (
-      knownSpeakerNames.length !==
-      knownSpeakerReferences.length
+      suppliedNames.length !==
+      suppliedReferences.length
     ) {
       return Response.json(
         {
@@ -368,16 +445,51 @@ export async function POST(
       );
     }
 
-    if (
-      knownSpeakerNames.length >
-      MAX_KNOWN_SPEAKERS
+    const savedSpeakers =
+      await loadSavedVoiceReferences();
+
+    const knownSpeakers: KnownSpeaker[] =
+      [...savedSpeakers];
+
+    const knownNamesLower =
+      new Set(
+        knownSpeakers.map(
+          (speaker) =>
+            speaker.name.toLocaleLowerCase(),
+        ),
+      );
+
+    for (
+      let index = 0;
+      index <
+        suppliedNames.length &&
+      knownSpeakers.length <
+        MAX_KNOWN_SPEAKERS;
+      index += 1
     ) {
-      return Response.json(
-        {
-          error:
-            "A maximum of four known speakers can be supplied.",
-        },
-        { status: 400 },
+      const name =
+        suppliedNames[index];
+
+      if (
+        knownNamesLower.has(
+          name.toLocaleLowerCase(),
+        )
+      ) {
+        continue;
+      }
+
+      knownSpeakers.push({
+        name,
+        dataUrl:
+          await fileToDataUrl(
+            suppliedReferences[
+              index
+            ],
+          ),
+      });
+
+      knownNamesLower.add(
+        name.toLocaleLowerCase(),
       );
     }
 
@@ -431,28 +543,17 @@ export async function POST(
     );
 
     for (
-      let index = 0;
-      index <
-      knownSpeakerNames.length;
-      index += 1
+      const speaker of
+      knownSpeakers
     ) {
-      const reference =
-        await fileToDataUrl(
-          knownSpeakerReferences[
-            index
-          ],
-        );
-
       openAiForm.append(
         "known_speaker_names[]",
-        knownSpeakerNames[
-          index
-        ],
+        speaker.name,
       );
 
       openAiForm.append(
         "known_speaker_references[]",
-        reference,
+        speaker.dataUrl,
       );
     }
 
@@ -461,12 +562,10 @@ export async function POST(
         "https://api.openai.com/v1/audio/transcriptions",
         {
           method: "POST",
-
           headers: {
             Authorization:
               `Bearer ${openAiKey}`,
           },
-
           body:
             openAiForm,
         },
@@ -505,6 +604,10 @@ export async function POST(
       formatSpeakerTranscript(
         segments,
         result.text,
+        knownSpeakers.map(
+          (speaker) =>
+            speaker.name,
+        ),
       );
 
     if (!transcript.trim()) {
@@ -520,6 +623,11 @@ export async function POST(
     return Response.json({
       transcript,
       segments,
+      knownSpeakers:
+        knownSpeakers.map(
+          (speaker) =>
+            speaker.name,
+        ),
     });
   } catch (error) {
     console.error(
