@@ -86,6 +86,15 @@ type KnownSpeakerReference = {
   file: File;
 };
 
+type SavedTranscriptSegment = {
+  id: string;
+  segment_index: number;
+  start_seconds: number;
+  end_seconds: number;
+  speaker_label: string | null;
+  text: string;
+};
+
 const vaults: {
   name: VaultPerson;
   displayName: string;
@@ -950,6 +959,11 @@ export default function AdminUpload() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [jumpTime, setJumpTime] = useState('');
 
+  const [transcriptSegments, setTranscriptSegments] =
+    useState<SavedTranscriptSegment[]>([]);
+  const [loadingTranscriptSegments, setLoadingTranscriptSegments] =
+    useState(false);
+
   const [photos, setPhotos] = useState<StoryPhoto[]>([]);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -998,8 +1012,10 @@ export default function AdminUpload() {
   useEffect(() => {
     if (isAdmin && selectedTrackId) {
       void loadPhotos(selectedTrackId);
+      void loadTranscriptSegments(selectedTrackId);
     } else {
       setPhotos([]);
+      setTranscriptSegments([]);
     }
   }, [isAdmin, selectedTrackId]);
 
@@ -1342,6 +1358,79 @@ export default function AdminUpload() {
     );
 
     setEditorMessage(null);
+  }
+
+  async function loadTranscriptSegments(
+    recordingId: string,
+  ) {
+    setLoadingTranscriptSegments(true);
+
+    try {
+      const response = await fetch(
+        `/api/cloudflare/transcript-segments/${encodeURIComponent(
+          recordingId,
+        )}`,
+        {
+          cache: 'no-store',
+        },
+      );
+
+      const data =
+        (await response.json()) as {
+          segments?: SavedTranscriptSegment[];
+          error?: string;
+        };
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            'Could not load transcript timestamps.',
+        );
+      }
+
+      setTranscriptSegments(
+        data.segments || [],
+      );
+    } catch (error) {
+      console.error(
+        'Could not load transcript timestamps.',
+        error,
+      );
+      setTranscriptSegments([]);
+    } finally {
+      setLoadingTranscriptSegments(false);
+    }
+  }
+
+  async function seekToTranscriptSegment(
+    segment: SavedTranscriptSegment,
+  ) {
+    const audio = editorAudioRef.current;
+
+    if (!audio) {
+      setEditorMessage({
+        type: 'error',
+        text: 'The audio player is not ready yet.',
+      });
+      return;
+    }
+
+    audio.currentTime = Math.max(
+      0,
+      segment.start_seconds,
+    );
+
+    try {
+      await audio.play();
+    } catch {
+      setEditorMessage({
+        type: 'success',
+        text:
+          `Audio moved to ${formatTranscriptTime(
+            segment.start_seconds,
+          )}. Press Play if your browser did not start it automatically.`,
+      });
+    }
   }
 
   async function loadPhotos(recordingId: string) {
@@ -1827,6 +1916,10 @@ export default function AdminUpload() {
       );
 
       await fetchTracks(
+        trackId,
+      );
+
+      await loadTranscriptSegments(
         trackId,
       );
 
@@ -2546,84 +2639,6 @@ export default function AdminUpload() {
                     </span>
                   </div>
 
-                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
-                    <div className="mb-3 flex items-center gap-2">
-                      <Headphones className="h-4 w-4 text-[#a66b27]" />
-
-                      <p className="text-sm font-semibold">
-                        Listen while you work
-                      </p>
-                    </div>
-
-                    <audio
-                      ref={editorAudioRef}
-                      key={selectedTrack.id}
-                      controls
-                      preload="metadata"
-                      src={`/api/cloudflare/audio/${selectedTrack.id}`}
-                      onLoadedMetadata={(event) => {
-                        event.currentTarget.playbackRate = playbackRate;
-                      }}
-                      className="w-full"
-                    />
-
-                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => moveAudioBy(-10)}
-                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
-                      >
-                        −10 sec
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => moveAudioBy(10)}
-                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
-                      >
-                        +10 sec
-                      </button>
-
-                      <select
-                        value={playbackRate}
-                        onChange={(event) =>
-                          changePlaybackRate(Number(event.target.value))
-                        }
-                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
-                        aria-label="Playback speed"
-                      >
-                        <option value={0.75}>0.75×</option>
-                        <option value={1}>1×</option>
-                        <option value={1.25}>1.25×</option>
-                        <option value={1.5}>1.5×</option>
-                      </select>
-
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={jumpTime}
-                          onChange={(event) => setJumpTime(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter') {
-                              event.preventDefault();
-                              jumpToEnteredTime();
-                            }
-                          }}
-                          placeholder="6:38"
-                          className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
-                          aria-label="Jump to time"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() => jumpToEnteredTime()}
-                          className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
-                        >
-                          Jump
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
                   <details className="rounded-2xl border border-stone-200 bg-[#f8f3e9]">
                     <summary className="cursor-pointer list-none p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -2782,6 +2797,84 @@ export default function AdminUpload() {
                     </p>
                   </div>
 
+                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Headphones className="h-4 w-4 text-[#a66b27]" />
+
+                      <p className="text-sm font-semibold">
+                        Listen while you work
+                      </p>
+                    </div>
+
+                    <audio
+                      ref={editorAudioRef}
+                      key={selectedTrack.id}
+                      controls
+                      preload="metadata"
+                      src={`/api/cloudflare/audio/${selectedTrack.id}`}
+                      onLoadedMetadata={(event) => {
+                        event.currentTarget.playbackRate = playbackRate;
+                      }}
+                      className="w-full"
+                    />
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => moveAudioBy(-10)}
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                      >
+                        −10 sec
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => moveAudioBy(10)}
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                      >
+                        +10 sec
+                      </button>
+
+                      <select
+                        value={playbackRate}
+                        onChange={(event) =>
+                          changePlaybackRate(Number(event.target.value))
+                        }
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                        aria-label="Playback speed"
+                      >
+                        <option value={0.75}>0.75×</option>
+                        <option value={1}>1×</option>
+                        <option value={1.25}>1.25×</option>
+                        <option value={1.5}>1.5×</option>
+                      </select>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={jumpTime}
+                          onChange={(event) => setJumpTime(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              jumpToEnteredTime();
+                            }
+                          }}
+                          placeholder="6:38"
+                          className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+                          aria-label="Jump to time"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => jumpToEnteredTime()}
+                          className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                        >
+                          Jump
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <label className="text-sm font-semibold">
@@ -2865,6 +2958,62 @@ export default function AdminUpload() {
                       placeholder="The transcript will appear here."
                       className="min-h-[420px] w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
                     />
+
+                    <div className="mt-5 rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">
+                            Click-to-listen transcript
+                          </p>
+
+                          <p className="mt-1 text-xs text-stone-500">
+                            Click a timestamped section to jump the audio player to that point.
+                          </p>
+                        </div>
+
+                        {loadingTranscriptSegments && (
+                          <Loader2 className="h-4 w-4 animate-spin text-[#a66b27]" />
+                        )}
+                      </div>
+
+                      {!loadingTranscriptSegments &&
+                      transcriptSegments.length > 0 ? (
+                        <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
+                          {transcriptSegments.map((segment) => (
+                            <button
+                              key={segment.id}
+                              type="button"
+                              onClick={() =>
+                                void seekToTranscriptSegment(
+                                  segment,
+                                )
+                              }
+                              className="block w-full rounded-xl border border-stone-200 bg-white p-3 text-left hover:border-[#b57931] hover:bg-[#fffaf0]"
+                            >
+                              <span className="mr-2 inline-flex rounded-md bg-[#f4e7cf] px-2 py-1 text-xs font-bold tabular-nums text-[#80542a]">
+                                {formatTranscriptTime(
+                                  segment.start_seconds,
+                                )}
+                              </span>
+
+                              {segment.speaker_label && (
+                                <span className="mr-2 text-xs font-semibold text-stone-500">
+                                  {segment.speaker_label}
+                                </span>
+                              )}
+
+                              <span className="text-sm leading-relaxed text-stone-700">
+                                {segment.text}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : !loadingTranscriptSegments ? (
+                        <p className="mt-4 rounded-xl bg-white p-3 text-sm text-stone-500">
+                          No timestamped transcript is stored for this recording yet. New transcriptions will include clickable timing.
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="border-t border-stone-200 pt-6">
