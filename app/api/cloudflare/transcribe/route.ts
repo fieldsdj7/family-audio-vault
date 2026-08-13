@@ -8,10 +8,18 @@ import {
 export const maxDuration = 300;
 
 const MAX_TRANSCRIPTION_BYTES = 25 * 1024 * 1024;
+const MAX_KNOWN_SPEAKERS = 4;
 
 type TrackRow = {
   id: string;
   storage_path: string | null;
+};
+
+type VoiceReferenceRow = {
+  id: string;
+  display_name: string;
+  storage_path: string;
+  mime_type: string;
 };
 
 type DiarizedSegment = {
@@ -42,8 +50,86 @@ type TranscriptSegment = {
   text: string;
 };
 
+type KnownSpeaker = {
+  name: string;
+  dataUrl: string;
+};
+
 function fileNameFromPath(path: string) {
   return path.split("/").pop() || "recording.mp3";
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += chunkSize
+  ) {
+    const chunk = bytes.subarray(
+      offset,
+      Math.min(offset + chunkSize, bytes.length),
+    );
+
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function arrayBufferToDataUrl(
+  buffer: ArrayBuffer,
+  contentType: string,
+) {
+  return `data:${contentType};base64,${bytesToBase64(
+    new Uint8Array(buffer),
+  )}`;
+}
+
+async function loadKnownSpeakers(
+  db: D1Database,
+  files: R2Bucket,
+): Promise<KnownSpeaker[]> {
+  const rows = await db
+    .prepare(
+      `SELECT
+         id,
+         display_name,
+         storage_path,
+         mime_type
+       FROM voice_references
+       ORDER BY display_name COLLATE NOCASE ASC
+       LIMIT ?`,
+    )
+    .bind(MAX_KNOWN_SPEAKERS)
+    .all<VoiceReferenceRow>();
+
+  const speakers: KnownSpeaker[] = [];
+
+  for (const row of rows.results) {
+    const object = await files.get(row.storage_path);
+
+    if (!object) {
+      console.warn(
+        `Voice reference file is missing for ${row.display_name}.`,
+      );
+      continue;
+    }
+
+    speakers.push({
+      name: row.display_name,
+      dataUrl: arrayBufferToDataUrl(
+        await object.arrayBuffer(),
+        row.mime_type ||
+          object.httpMetadata?.contentType ||
+          "audio/wav",
+      ),
+    });
+  }
+
+  return speakers;
 }
 
 function usableSegments(
@@ -74,6 +160,7 @@ function usableSegments(
 function formatSpeakerTranscript(
   segments: TranscriptSegment[],
   fallbackText: string,
+  knownSpeakerNames: string[],
 ) {
   if (!segments.length) {
     return fallbackText.trim();
@@ -99,15 +186,33 @@ function formatSpeakerTranscript(
       .trim();
   }
 
-  const speakerNumbers =
-    new Map(
-      speakerIds.map(
-        (speaker, index) => [
-          speaker,
-          index + 1,
-        ],
-      ),
+  const knownSet = new Set(
+    knownSpeakerNames.map((name) =>
+      name.toLocaleLowerCase(),
+    ),
+  );
+
+  const unknownSpeakerNumbers =
+    new Map<string, number>();
+
+  let nextNumber = 1;
+
+  for (const speaker of speakerIds) {
+    if (
+      knownSet.has(
+        speaker.toLocaleLowerCase(),
+      )
+    ) {
+      continue;
+    }
+
+    unknownSpeakerNumbers.set(
+      speaker,
+      nextNumber,
     );
+
+    nextNumber += 1;
+  }
 
   const turns: Array<{
     speaker: string | null;
@@ -115,8 +220,7 @@ function formatSpeakerTranscript(
   }> = [];
 
   for (const segment of segments) {
-    const previous =
-      turns.at(-1);
+    const previous = turns.at(-1);
 
     if (
       previous?.speaker ===
@@ -138,8 +242,16 @@ function formatSpeakerTranscript(
         return turn.text;
       }
 
+      if (
+        knownSet.has(
+          turn.speaker.toLocaleLowerCase(),
+        )
+      ) {
+        return `${turn.speaker}: ${turn.text}`;
+      }
+
       const number =
-        speakerNumbers.get(
+        unknownSpeakerNumbers.get(
           turn.speaker,
         );
 
@@ -155,7 +267,7 @@ function removeSpeakerLabels(
 ) {
   return value
     .replace(
-      /(^|\n)\s*Speaker\s+\d+\s*:\s*/gi,
+      /(^|\n)\s*(?:Speaker\s+\d+|[^:\n]{1,80})\s*:\s*/gi,
       "$1",
     )
     .trim();
@@ -202,22 +314,36 @@ function hasTheSameWords(
   );
 }
 
-function hasSpeakerLabels(
+function transcriptLabels(
   transcript: string,
 ) {
-  const hasSpeaker1 =
-    /(^|\n)\s*Speaker\s+1\s*:/i.test(
-      transcript,
-    );
+  return [
+    ...transcript.matchAll(
+      /(^|\n)\s*([^:\n]{1,80})\s*:/g,
+    ),
+  ].map((match) =>
+    match[2].trim(),
+  );
+}
 
-  const hasSpeaker2 =
-    /(^|\n)\s*Speaker\s+2\s*:/i.test(
-      transcript,
-    );
+function preservesSpeakerLabels(
+  original: string,
+  cleaned: string,
+) {
+  const originalLabels =
+    transcriptLabels(original);
 
-  return hasSpeaker1
-    ? true
-    : !hasSpeaker2;
+  if (!originalLabels.length) {
+    return true;
+  }
+
+  const cleanedLabels =
+    transcriptLabels(cleaned);
+
+  return originalLabels.every(
+    (label) =>
+      cleanedLabels.includes(label),
+  );
 }
 
 async function cleanTranscriptFormatting(
@@ -233,31 +359,25 @@ async function cleanTranscriptFormatting(
       "https://api.openai.com/v1/chat/completions",
       {
         method: "POST",
-
         headers: {
           Authorization:
             `Bearer ${openAiKey}`,
           "Content-Type":
             "application/json",
         },
-
         body: JSON.stringify({
           model:
             "gpt-4.1-mini",
-
           temperature: 0,
-
           response_format: {
             type: "json_object",
           },
-
           messages: [
             {
               role: "system",
-
               content: [
                 "You are formatting a word-for-word family interview transcript for archival preservation.",
-                "The transcript may contain labels such as Speaker 1: and Speaker 2:.",
+                "The transcript may contain speaker labels such as Bill:, Dan:, Ivy:, Speaker 1:, or Speaker 2:.",
                 "Keep every existing speaker label exactly where it belongs.",
                 "Do not rename the speakers.",
                 "Correct capitalization at the beginning of sentences.",
@@ -278,7 +398,6 @@ async function cleanTranscriptFormatting(
                 "Return JSON only with transcript as a string.",
               ].join(" "),
             },
-
             {
               role: "user",
               content: transcript,
@@ -332,22 +451,18 @@ async function cleanTranscriptFormatting(
       console.warn(
         "Transcript cleanup changed spoken words. Keeping original transcription.",
       );
-
       return transcript;
     }
 
     if (
-      /Speaker\s+1\s*:/i.test(
+      !preservesSpeakerLabels(
         transcript,
-      ) &&
-      !hasSpeakerLabels(
         cleaned,
       )
     ) {
       console.warn(
-        "Transcript cleanup removed speaker labels. Keeping original transcription.",
+        "Transcript cleanup changed speaker labels. Keeping original transcription.",
       );
-
       return transcript;
     }
 
@@ -357,7 +472,6 @@ async function cleanTranscriptFormatting(
       "Automatic punctuation cleanup failed. Keeping original transcription.",
       error,
     );
-
     return transcript;
   }
 }
@@ -545,6 +659,12 @@ export async function POST(
       },
     );
 
+    const knownSpeakers =
+      await loadKnownSpeakers(
+        db,
+        files,
+      );
+
     const form =
       new FormData();
 
@@ -576,17 +696,27 @@ export async function POST(
       ),
     );
 
+    for (const speaker of knownSpeakers) {
+      form.append(
+        "known_speaker_names[]",
+        speaker.name,
+      );
+
+      form.append(
+        "known_speaker_references[]",
+        speaker.dataUrl,
+      );
+    }
+
     const openAiResponse =
       await fetch(
         "https://api.openai.com/v1/audio/transcriptions",
         {
           method: "POST",
-
           headers: {
             Authorization:
               `Bearer ${openAiKey}`,
           },
-
           body: form,
         },
       );
@@ -615,6 +745,9 @@ export async function POST(
       formatSpeakerTranscript(
         segments,
         responseBody.text,
+        knownSpeakers.map(
+          (speaker) => speaker.name,
+        ),
       );
 
     const transcript =
@@ -647,6 +780,10 @@ export async function POST(
     return Response.json({
       transcript,
       segments,
+      knownSpeakers:
+        knownSpeakers.map(
+          (speaker) => speaker.name,
+        ),
     });
   } catch (error) {
     if (trackId) {
