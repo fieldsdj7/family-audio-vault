@@ -10,6 +10,7 @@ import {
   FileWarning,
   Gauge,
   Loader2,
+  Mic2,
   Scissors,
   ShieldCheck,
   Trash2,
@@ -64,6 +65,13 @@ const readyCards: ToolCard[] = [
     description:
       'Organize finished stories into chapters, review the book outline, and prepare the family history book.',
     icon: BookOpen,
+  },
+  {
+    href: '/project-tools/voice-references',
+    title: 'Voice References',
+    description:
+      'Save short voice samples for regular speakers so future transcriptions can recognize them by voice.',
+    icon: Mic2,
   },
 ];
 
@@ -141,7 +149,7 @@ export default function ProjectToolsPage() {
 
   return (
     <main className="min-h-screen bg-[#f6f0e5] p-5 text-stone-800 md:p-10">
-      <div className="mx-auto max-w-5xl">
+      <div className="mx-auto max-w-4xl">
         <a
           href="/admin"
           className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-[#8a561f]"
