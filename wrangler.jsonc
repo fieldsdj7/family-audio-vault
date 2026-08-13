@@ -12,11 +12,7 @@
     "global_fetch_strictly_public"
   ],
 
-  "limits": {
-    "cpu_ms": 300000
-  },
-
-  "secrets": {
+   "secrets": {
     "required": [
       "OPENAI_API_KEY"
     ]
