@@ -5,7 +5,7 @@ import {
   vaultAccessResponse,
 } from "../../../../lib/cloudflare";
 
-const MAX_CLIP_BYTES = 95 * 1024 * 1024;
+const MAX_CLIP_BYTES = 24 * 1024 * 1024;
 
 type SourceRecordingRow = {
   id: string;
@@ -18,19 +18,29 @@ type SourceRecordingRow = {
   created_at: string;
 };
 
-function textField(form: FormData, name: string) {
-  const value = form.get(name);
+type SplitMetadataBody = {
+  recordingId?: unknown;
+  sourceRecordingId?: unknown;
+  startSeconds?: unknown;
+  endSeconds?: unknown;
+  title?: unknown;
+  transcript?: unknown;
+  notes?: unknown;
+  questionId?: unknown;
+};
+
+function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function optionalText(form: FormData, name: string) {
-  const value = textField(form, name);
-  return value || null;
+function optionalText(value: unknown) {
+  const cleaned = cleanText(value);
+  return cleaned || null;
 }
 
-function numberField(form: FormData, name: string) {
-  const value = Number(textField(form, name));
-  return Number.isFinite(value) ? value : Number.NaN;
+function finiteNumber(value: unknown) {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : Number.NaN;
 }
 
 function formatTime(seconds: number) {
@@ -39,6 +49,12 @@ function formatTime(seconds: number) {
   return `${Math.floor(wholeSeconds / 60)}:${String(
     wholeSeconds % 60,
   ).padStart(2, "0")}`;
+}
+
+function validRecordingId(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 async function requireAdministrator(request: Request) {
@@ -90,6 +106,178 @@ export async function GET(request: Request) {
   }
 }
 
+export async function PUT(request: Request) {
+  let uploadedPath: string | null = null;
+
+  try {
+    const access = await requireAdministrator(request);
+
+    if (access.response || !access.member) {
+      return access.response;
+    }
+
+    const url = new URL(request.url);
+
+    const sourceRecordingId = cleanText(
+      url.searchParams.get("sourceRecordingId"),
+    );
+    const recordingId = cleanText(url.searchParams.get("recordingId"));
+    const startSeconds = finiteNumber(
+      url.searchParams.get("startSeconds"),
+    );
+    const endSeconds = finiteNumber(
+      url.searchParams.get("endSeconds"),
+    );
+
+    if (
+      !sourceRecordingId ||
+      !recordingId ||
+      !validRecordingId(recordingId)
+    ) {
+      return Response.json(
+        { error: "The split upload information is incomplete." },
+        { status: 400 },
+      );
+    }
+
+    if (
+      !Number.isInteger(startSeconds) ||
+      startSeconds < 0 ||
+      !Number.isInteger(endSeconds) ||
+      endSeconds <= startSeconds
+    ) {
+      return Response.json(
+        {
+          error:
+            "Enter a valid start and end time. The end must be after the start.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const contentType = request.headers.get("content-type") || "";
+
+    if (!contentType.toLowerCase().startsWith("audio/wav")) {
+      return Response.json(
+        { error: "The split upload must be a WAV audio file." },
+        { status: 415 },
+      );
+    }
+
+    const contentLengthHeader = request.headers.get("content-length");
+    const contentLength = contentLengthHeader
+      ? Number(contentLengthHeader)
+      : Number.NaN;
+
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > MAX_CLIP_BYTES
+    ) {
+      return Response.json(
+        {
+          error:
+            "This audio section is too large to save safely in one split. Choose a shorter section.",
+        },
+        { status: 413 },
+      );
+    }
+
+    if (!request.body) {
+      return Response.json(
+        { error: "The split audio file is missing." },
+        { status: 400 },
+      );
+    }
+
+    const { db, files } = await getVaultBindings();
+
+    const source = await db
+      .prepare(
+        `SELECT
+           id,
+           title,
+           speaker,
+           category,
+           vault_person,
+           storage_path,
+           transcript,
+           created_at
+         FROM audio_tracks
+         WHERE id = ?
+           AND trashed_at IS NULL
+           AND source_track_id IS NULL`,
+      )
+      .bind(sourceRecordingId)
+      .first<SourceRecordingRow>();
+
+    if (!source) {
+      return Response.json(
+        { error: "The original recording could not be found." },
+        { status: 404 },
+      );
+    }
+
+    if (!source.storage_path) {
+      return Response.json(
+        {
+          error:
+            "The original audio file has not been copied to Cloudflare yet.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const existingTrack = await db
+      .prepare(
+        `SELECT id
+         FROM audio_tracks
+         WHERE id = ?`,
+      )
+      .bind(recordingId)
+      .first<{ id: string }>();
+
+    if (existingTrack) {
+      return Response.json(
+        { error: "That split recording already exists." },
+        { status: 409 },
+      );
+    }
+
+    uploadedPath = `recordings/${recordingId}.wav`;
+
+    await files.put(uploadedPath, request.body, {
+      httpMetadata: {
+        contentType: "audio/wav",
+      },
+      customMetadata: {
+        sourceRecordingId: source.id,
+        uploadedBy: access.member.email,
+        clipStartSeconds: String(startSeconds),
+        clipEndSeconds: String(endSeconds),
+      },
+    });
+
+    return Response.json({
+      uploaded: true,
+      storagePath: uploadedPath,
+    });
+  } catch (error) {
+    if (uploadedPath) {
+      try {
+        const { files } = await getVaultBindings();
+        await files.delete(uploadedPath);
+      } catch (cleanupError) {
+        console.error(
+          "Could not remove an incomplete streamed split upload.",
+          cleanupError,
+        );
+      }
+    }
+
+    return vaultAccessResponse(error);
+  }
+}
+
 export async function POST(request: Request) {
   let uploadedPath: string | null = null;
 
@@ -100,38 +288,25 @@ export async function POST(request: Request) {
       return access.response;
     }
 
-    const form = await request.formData();
+    const body = (await request.json()) as SplitMetadataBody;
 
-    const clip = form.get("clip");
-    const sourceRecordingId = textField(form, "sourceRecordingId");
-    const startSeconds = numberField(form, "startSeconds");
-    const endSeconds = numberField(form, "endSeconds");
-    const title = optionalText(form, "title");
-    const transcript = optionalText(form, "transcript");
-    const notes = optionalText(form, "notes");
-    const questionId = optionalText(form, "questionId");
-
-    if (!sourceRecordingId) {
-      return Response.json(
-        { error: "Choose the original recording first." },
-        { status: 400 },
-      );
-    }
+    const recordingId = cleanText(body.recordingId);
+    const sourceRecordingId = cleanText(body.sourceRecordingId);
+    const startSeconds = finiteNumber(body.startSeconds);
+    const endSeconds = finiteNumber(body.endSeconds);
+    const title = optionalText(body.title);
+    const transcript = optionalText(body.transcript);
+    const notes = optionalText(body.notes);
+    const questionId = optionalText(body.questionId);
 
     if (
-      !(clip instanceof File) ||
-      clip.size === 0
+      !recordingId ||
+      !validRecordingId(recordingId) ||
+      !sourceRecordingId
     ) {
       return Response.json(
-        { error: "The clipped audio file is required." },
+        { error: "The split recording information is incomplete." },
         { status: 400 },
-      );
-    }
-
-    if (clip.size > MAX_CLIP_BYTES) {
-      return Response.json(
-        { error: "The clipped audio file must be smaller than 95 MB." },
-        { status: 413 },
       );
     }
 
@@ -213,31 +388,43 @@ export async function POST(request: Request) {
       }
     }
 
-    const recordingId = crypto.randomUUID();
+    const existingTrack = await db
+      .prepare(
+        `SELECT id
+         FROM audio_tracks
+         WHERE id = ?`,
+      )
+      .bind(recordingId)
+      .first<{ id: string }>();
+
+    if (existingTrack) {
+      return Response.json(
+        { error: "That split recording already exists." },
+        { status: 409 },
+      );
+    }
+
+    uploadedPath = `recordings/${recordingId}.wav`;
+
+    const uploadedObject = await files.head(uploadedPath);
+
+    if (!uploadedObject) {
+      uploadedPath = null;
+
+      return Response.json(
+        {
+          error:
+            "The split audio upload could not be found. Please try creating the split again.",
+        },
+        { status: 409 },
+      );
+    }
 
     const recordingTitle =
       title ||
       `${source.title} (${formatTime(startSeconds)}–${formatTime(
         endSeconds,
       )})`;
-
-    uploadedPath = `recordings/${recordingId}.wav`;
-
-    await files.put(
-      uploadedPath,
-      clip.stream(),
-      {
-        httpMetadata: {
-          contentType: "audio/wav",
-        },
-        customMetadata: {
-          sourceRecordingId: source.id,
-          uploadedBy: access.member.email,
-          clipStartSeconds: String(startSeconds),
-          clipEndSeconds: String(endSeconds),
-        },
-      },
-    );
 
     await db.batch([
       db
@@ -285,6 +472,8 @@ export async function POST(request: Request) {
         .bind(source.id),
     ]);
 
+    uploadedPath = null;
+
     return Response.json(
       {
         recording: {
@@ -294,7 +483,7 @@ export async function POST(request: Request) {
           category: source.category || "General",
           vault_person: source.vault_person,
           question_id: questionId,
-          storage_path: uploadedPath,
+          storage_path: `recordings/${recordingId}.wav`,
           source_track_id: source.id,
           clip_start_seconds: startSeconds,
           clip_end_seconds: endSeconds,
