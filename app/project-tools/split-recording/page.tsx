@@ -909,48 +909,63 @@ export default function SplitRecordingPage() {
         );
       }
 
-      const form =
-        new FormData();
+      const recordingId =
+        crypto.randomUUID();
 
-      form.append(
-        "clip",
-        clip,
-      );
+      setMessage({
+        type: "success",
+        text:
+          "Uploading the split audio safely…",
+      });
 
-      form.append(
-        "sourceRecordingId",
-        selectedSource.id,
-      );
+      const uploadParams =
+        new URLSearchParams({
+          sourceRecordingId:
+            selectedSource.id,
+          recordingId,
+          startSeconds:
+            String(start),
+          endSeconds:
+            String(end),
+        });
 
-      form.append(
-        "startSeconds",
-        String(start),
-      );
+      const uploadResponse =
+        await fetch(
+          `/api/cloudflare/split?${uploadParams.toString()}`,
+          {
+            method:
+              "PUT",
+            headers: {
+              "Content-Type":
+                "audio/wav",
+            },
+            body: clip,
+          },
+        );
 
-      form.append(
-        "endSeconds",
-        String(end),
-      );
+      const uploadResult =
+        await readJson<{
+          uploaded?: boolean;
+          error?: string;
+        }>(
+          uploadResponse,
+        );
 
-      form.append(
-        "title",
-        title.trim(),
-      );
+      if (
+        !uploadResponse.ok ||
+        !uploadResult.uploaded
+      ) {
+        throw new Error(
+          uploadResult.error ||
+            "The split audio could not be uploaded.",
+        );
+      }
 
-      form.append(
-        "transcript",
-        transcript.trim(),
-      );
-
-      form.append(
-        "notes",
-        notes.trim(),
-      );
-
-      form.append(
-        "questionId",
-        questionId,
-      );
+      setMessage({
+        type: "success",
+        text:
+          "Saving the split recording details…",
+      });
 
       const response =
         await fetch(
@@ -958,7 +973,27 @@ export default function SplitRecordingPage() {
           {
             method:
               "POST",
-            body: form,
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body:
+              JSON.stringify({
+                recordingId,
+                sourceRecordingId:
+                  selectedSource.id,
+                startSeconds:
+                  start,
+                endSeconds:
+                  end,
+                title:
+                  title.trim(),
+                transcript:
+                  transcript.trim(),
+                notes:
+                  notes.trim(),
+                questionId,
+              }),
           },
         );
 
@@ -984,12 +1019,47 @@ export default function SplitRecordingPage() {
         );
       }
 
+      let storyCreated =
+        false;
+
+      if (
+        transcript.trim()
+      ) {
+        const storyResponse =
+          await fetch(
+            "/api/cloudflare/story",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body:
+                JSON.stringify({
+                  trackId:
+                    result.recording
+                      .id,
+                  mode:
+                    "create",
+                }),
+            },
+          );
+
+        storyCreated =
+          storyResponse.ok;
+      }
+
       setMessage({
         type: "success",
 
         text:
           transcript.trim()
-            ? "Separate answer and transcript created with its own physical audio file. Review and edit the transcript in Story Studio, then create the family story when you are ready."
+            ? storyCreated
+              ? "Separate answer created with its own physical audio file, transcript, and family story. The original recording remains untouched."
+              : "Separate answer and transcript created with its own physical audio file. The family story can be created later in Story Studio."
             : "Separate answer created with its own physical audio file. The original recording remains untouched.",
       });
 
