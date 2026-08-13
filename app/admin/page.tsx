@@ -12,6 +12,7 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCircle,
+  Clock3,
   Copy,
   Download,
   FileAudio,
@@ -883,6 +884,117 @@ function formatTranscriptTime(
   ).padStart(2, '0')}`;
 }
 
+function formatTotalAudioTime(
+  seconds: number,
+) {
+  const totalSeconds =
+    Math.max(
+      0,
+      Math.round(seconds),
+    );
+
+  const hours =
+    Math.floor(
+      totalSeconds / 3600,
+    );
+
+  const minutes =
+    Math.floor(
+      (totalSeconds % 3600) / 60,
+    );
+
+  if (hours > 0) {
+    return `${hours} hr ${minutes} min`;
+  }
+
+  return `${minutes} min`;
+}
+
+function audioDurationFromUrl(
+  url: string,
+) {
+  return new Promise<number>(
+    (resolve) => {
+      const audio =
+        document.createElement('audio');
+
+      let settled = false;
+
+      const finish = (value: number) => {
+        if (settled) return;
+        settled = true;
+        audio.removeAttribute('src');
+        audio.load();
+        resolve(
+          Number.isFinite(value)
+            ? value
+            : 0,
+        );
+      };
+
+      audio.preload = 'metadata';
+      audio.onloadedmetadata = () =>
+        finish(audio.duration);
+      audio.onerror = () => finish(0);
+      audio.src = url;
+      audio.load();
+
+      window.setTimeout(
+        () => finish(0),
+        15000,
+      );
+    },
+  );
+}
+
+function findTranscriptRange(
+  transcript: string,
+  segmentText: string,
+) {
+  const words =
+    segmentText.match(
+      /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu,
+    ) || [];
+
+  if (!words.length) {
+    return null;
+  }
+
+  const escapedWords =
+    words
+      .slice(0, Math.min(10, words.length))
+      .map((word) =>
+        word.replace(
+          /[.*+?^${}()|[\]\\]/g,
+          '\\$&',
+        ),
+      );
+
+  try {
+    const pattern =
+      new RegExp(
+        escapedWords.join(
+          '[^\\p{L}\\p{N}]+',
+        ),
+        'iu',
+      );
+
+    const match =
+      pattern.exec(transcript);
+
+    if (!match) {
+      return null;
+    }
+
+    return {
+      start: match.index,
+      end: match.index + match[0].length,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -949,6 +1061,13 @@ export default function AdminUpload() {
   } | null>(null);
 
   const editorAudioRef = useRef<HTMLAudioElement | null>(null);
+  const transcriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const durationCacheRef = useRef<Map<string, number>>(new Map());
+
+  const [vaultAudioSeconds, setVaultAudioSeconds] =
+    useState(0);
+  const [loadingVaultAudioTime, setLoadingVaultAudioTime] =
+    useState(false);
 
   const visibleTracks = allTracks.filter(
     (track) => track.vault_person === vaultPerson,
@@ -972,6 +1091,85 @@ export default function AdminUpload() {
       setTranscriptSegments([]);
     }
   }, [isAdmin, selectedTrackId]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setVaultAudioSeconds(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function calculateVaultAudioTime() {
+      const tracks =
+        allTracks.filter(
+          (track) =>
+            track.vault_person === vaultPerson,
+        );
+
+      if (!tracks.length) {
+        setVaultAudioSeconds(0);
+        setLoadingVaultAudioTime(false);
+        return;
+      }
+
+      setLoadingVaultAudioTime(true);
+
+      let total = 0;
+
+      for (const track of tracks) {
+        if (cancelled) return;
+
+        const clippedDuration =
+          track.clip_start_seconds !== null &&
+          track.clip_start_seconds !== undefined &&
+          track.clip_end_seconds !== null &&
+          track.clip_end_seconds !== undefined
+            ? Math.max(
+                0,
+                track.clip_end_seconds -
+                  track.clip_start_seconds,
+              )
+            : null;
+
+        if (clippedDuration !== null) {
+          total += clippedDuration;
+          continue;
+        }
+
+        const cached =
+          durationCacheRef.current.get(track.id);
+
+        if (cached !== undefined) {
+          total += cached;
+          continue;
+        }
+
+        const duration =
+          await audioDurationFromUrl(
+            `/api/cloudflare/audio/${track.id}`,
+          );
+
+        durationCacheRef.current.set(
+          track.id,
+          duration,
+        );
+
+        total += duration;
+      }
+
+      if (!cancelled) {
+        setVaultAudioSeconds(total);
+        setLoadingVaultAudioTime(false);
+      }
+    }
+
+    void calculateVaultAudioTime();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allTracks, isAdmin, vaultPerson]);
 
   async function start() {
     setCheckingAccess(true);
@@ -1213,6 +1411,26 @@ export default function AdminUpload() {
         0,
         segment.start_seconds,
       );
+
+    const textarea =
+      transcriptTextareaRef.current;
+
+    if (textarea) {
+      const range =
+        findTranscriptRange(
+          transcriptDraft,
+          segment.text,
+        );
+
+      textarea.focus();
+
+      if (range) {
+        textarea.setSelectionRange(
+          range.start,
+          range.end,
+        );
+      }
+    }
 
     try {
       await audio.play();
@@ -2318,6 +2536,33 @@ export default function AdminUpload() {
               <p className="mt-2 text-sm text-stone-600">
                 Only recordings from this Vault are shown here.
               </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-stone-600">
+                <span>
+                  {visibleTracks.length}{' '}
+                  {visibleTracks.length === 1
+                    ? 'recording'
+                    : 'recordings'}
+                </span>
+
+                <span className="text-stone-400">
+                  ·
+                </span>
+
+                <span className="inline-flex items-center gap-1.5">
+                  {loadingVaultAudioTime ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#a66b27]" />
+                  ) : (
+                    <Clock3 className="h-3.5 w-3.5 text-[#a66b27]" />
+                  )}
+
+                  {loadingVaultAudioTime
+                    ? 'Calculating audio time…'
+                    : `${formatTotalAudioTime(
+                        vaultAudioSeconds,
+                      )} total audio`}
+                </span>
+              </div>
             </div>
 
             <button
@@ -2425,89 +2670,111 @@ export default function AdminUpload() {
                     />
                   </div>
 
-                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
-                    <div className="flex items-center gap-2">
-                      <Tag className="h-4 w-4 text-[#a66b27]" />
+                  <details className="rounded-2xl border border-stone-200 bg-[#f8f3e9]">
+                    <summary className="cursor-pointer list-none p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Tag className="h-4 w-4 text-[#a66b27]" />
 
-                      <p className="text-sm font-semibold">
-                        Book Part
-                      </p>
-                    </div>
+                          <div>
+                            <p className="text-sm font-semibold">
+                              Recording Details
+                            </p>
 
-                    <p className="mt-1 text-sm text-stone-600">
-                      Choose the major life section this story belongs in.
-                      You can correct older category labels here.
-                    </p>
+                            <p className="mt-1 text-xs text-stone-500">
+                              {editorCategory}
+                              {' · '}
+                              {editorQuestionId
+                                ? `Question ${
+                                    questions.find(
+                                      (question) =>
+                                        question.id ===
+                                        editorQuestionId,
+                                    )?.question_number ||
+                                    'linked'
+                                  }`
+                                : 'No question linked'}
+                            </p>
+                          </div>
+                        </div>
 
-                    <select
-                      value={editorCategory}
-                      onChange={(event) =>
-                        setEditorCategory(event.target.value)
-                      }
-                      className="mt-4 w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
-                    >
-                      {!categoryOptions.includes(
-                        editorCategory as
-                          (typeof categoryOptions)[number],
-                      ) && (
-                        <option value={editorCategory}>
-                          {editorCategory} — legacy category
-                        </option>
-                      )}
+                        <span className="text-xs font-semibold text-[#80542a]">
+                          Edit
+                        </span>
+                      </div>
+                    </summary>
 
-                      {categoryOptions.map(
-                        (option) => (
-                          <option
-                            key={option}
-                            value={option}
+                    <div className="border-t border-stone-200 p-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-sm font-semibold">
+                            Book Part
+                          </label>
+
+                          <select
+                            value={editorCategory}
+                            onChange={(event) =>
+                              setEditorCategory(event.target.value)
+                            }
+                            className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
                           >
-                            {option}
-                          </option>
-                        ),
-                      )}
-                    </select>
+                            {!categoryOptions.includes(
+                              editorCategory as
+                                (typeof categoryOptions)[number],
+                            ) && (
+                              <option value={editorCategory}>
+                                {editorCategory} — legacy category
+                              </option>
+                            )}
 
-                    <p className="mt-2 text-xs text-stone-500">
-                      These are major book parts. Individual stories can
-                      still become separate chapters within each part.
-                    </p>
-                  </div>
+                            {categoryOptions.map(
+                              (option) => (
+                                <option
+                                  key={option}
+                                  value={option}
+                                >
+                                  {option}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </div>
 
-                  <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
-                    <div className="flex items-center gap-2">
-                      <BookOpen className="h-4 w-4 text-[#a66b27]" />
+                        <div>
+                          <label className="mb-1.5 block text-sm font-semibold">
+                            Story Question
+                          </label>
 
-                      <p className="text-sm font-semibold">
-                        Story Question
+                          <select
+                            value={editorQuestionId}
+                            onChange={(event) =>
+                              setEditorQuestionId(event.target.value)
+                            }
+                            className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
+                          >
+                            <option value="">
+                              Not linked to a question
+                            </option>
+
+                            {questions.map((question) => (
+                              <option
+                                key={question.id}
+                                value={question.id}
+                              >
+                                {question.question_number}.{' '}
+                                {question.question_text}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-xs text-stone-500">
+                        These values are normally chosen when the recording is uploaded.
+                        Open this section only when you need to correct an older recording.
                       </p>
                     </div>
-
-                    <p className="mt-1 text-sm text-stone-600">
-                      Link this existing recording to the question it answers.
-                    </p>
-
-                    <select
-                      value={editorQuestionId}
-                      onChange={(event) =>
-                        setEditorQuestionId(event.target.value)
-                      }
-                      className="mt-4 w-full rounded-xl border border-stone-300 bg-white px-4 py-3"
-                    >
-                      <option value="">
-                        Not linked to a question
-                      </option>
-
-                      {questions.map((question) => (
-                        <option
-                          key={question.id}
-                          value={question.id}
-                        >
-                          {question.question_number}.{' '}
-                          {question.question_text}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  </details>
 
                   <div className="rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
                     <div className="flex items-center gap-2">
@@ -2635,72 +2902,67 @@ export default function AdminUpload() {
                       </div>
                     </div>
 
-                    <textarea
-                      rows={12}
-                      value={transcriptDraft}
-                      onChange={(event) =>
-                        setTranscriptDraft(
-                          event.target.value,
-                        )
-                      }
-                      placeholder="The transcript will appear here."
-                      className="w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
-                    />
-
-                    <div className="mt-5 rounded-2xl border border-stone-200 bg-[#f8f3e9] p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold">
-                            Click-to-listen transcript
+                    <div className="rounded-2xl border border-stone-300 bg-white">
+                      <div className="border-b border-stone-200 bg-[#f8f3e9] px-4 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs text-stone-500">
+                            Edit the transcript in the box below. Click a timestamp to move the audio
+                            and jump the editor to that section.
                           </p>
 
-                          <p className="mt-1 text-xs text-stone-500">
-                            Click a timestamped section to jump the audio player to that point.
-                          </p>
+                          {loadingTranscriptSegments && (
+                            <Loader2 className="h-4 w-4 animate-spin text-[#a66b27]" />
+                          )}
                         </div>
-
-                        {loadingTranscriptSegments && (
-                          <Loader2 className="h-4 w-4 animate-spin text-[#a66b27]" />
-                        )}
                       </div>
 
-                      {!loadingTranscriptSegments &&
-                      transcriptSegments.length > 0 ? (
-                        <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
-                          {transcriptSegments.map((segment) => (
-                            <button
-                              key={segment.id}
-                              type="button"
-                              onClick={() =>
-                                void seekToTranscriptSegment(
-                                  segment,
-                                )
-                              }
-                              className="block w-full rounded-xl border border-stone-200 bg-white p-3 text-left hover:border-[#b57931] hover:bg-[#fffaf0]"
-                            >
-                              <span className="mr-2 inline-flex rounded-md bg-[#f4e7cf] px-2 py-1 text-xs font-bold tabular-nums text-[#80542a]">
-                                {formatTranscriptTime(
-                                  segment.start_seconds,
-                                )}
-                              </span>
-
-                              {segment.speaker_label && (
-                                <span className="mr-2 text-xs font-semibold text-stone-500">
-                                  {segment.speaker_label}
-                                </span>
-                              )}
-
-                              <span className="text-sm leading-relaxed text-stone-700">
-                                {segment.text}
-                              </span>
-                            </button>
-                          ))}
+                      <div className="grid min-h-[360px] grid-cols-[76px_minmax(0,1fr)]">
+                        <div className="max-h-[520px] overflow-y-auto border-r border-stone-200 bg-[#fbf7ef] p-2">
+                          {!loadingTranscriptSegments &&
+                          transcriptSegments.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {transcriptSegments.map((segment) => (
+                                <button
+                                  key={segment.id}
+                                  type="button"
+                                  title={
+                                    segment.speaker_label
+                                      ? `${segment.speaker_label}: ${segment.text}`
+                                      : segment.text
+                                  }
+                                  onClick={() =>
+                                    void seekToTranscriptSegment(
+                                      segment,
+                                    )
+                                  }
+                                  className="w-full rounded-lg border border-stone-200 bg-white px-2 py-2 text-center text-xs font-bold tabular-nums text-[#80542a] hover:border-[#b57931] hover:bg-[#f4e7cf]"
+                                >
+                                  {formatTranscriptTime(
+                                    segment.start_seconds,
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          ) : !loadingTranscriptSegments ? (
+                            <p className="px-1 py-2 text-center text-[11px] leading-relaxed text-stone-400">
+                              No saved timestamps
+                            </p>
+                          ) : null}
                         </div>
-                      ) : !loadingTranscriptSegments ? (
-                        <p className="mt-4 rounded-xl bg-white p-3 text-sm text-stone-500">
-                          No timestamped transcript is stored for this recording yet. New transcriptions will include clickable timing.
-                        </p>
-                      ) : null}
+
+                        <textarea
+                          ref={transcriptTextareaRef}
+                          rows={16}
+                          value={transcriptDraft}
+                          onChange={(event) =>
+                            setTranscriptDraft(
+                              event.target.value,
+                            )
+                          }
+                          placeholder="The transcript will appear here."
+                          className="min-h-[360px] w-full resize-y border-0 bg-white px-4 py-3 leading-relaxed outline-none"
+                        />
+                      </div>
                     </div>
                   </div>
 
