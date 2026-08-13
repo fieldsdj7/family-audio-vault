@@ -915,7 +915,7 @@ export default function SplitRecordingPage() {
       setMessage({
         type: "success",
         text:
-          "Uploading the split audio safely…",
+          "Saving the split audio…",
       });
 
       const uploadParams =
@@ -945,7 +945,10 @@ export default function SplitRecordingPage() {
 
       const uploadResult =
         await readJson<{
-          uploaded?: boolean;
+          recording?: {
+            id: string;
+            title: string;
+          };
           error?: string;
         }>(
           uploadResponse,
@@ -953,18 +956,18 @@ export default function SplitRecordingPage() {
 
       if (
         !uploadResponse.ok ||
-        !uploadResult.uploaded
+        !uploadResult.recording
       ) {
         throw new Error(
           uploadResult.error ||
-            "The split audio could not be uploaded.",
+            "The separate answer could not be created.",
         );
       }
 
       setMessage({
         type: "success",
         text:
-          "Saving the split recording details…",
+          "Saving the transcript and recording details…",
       });
 
       const response =
@@ -972,7 +975,7 @@ export default function SplitRecordingPage() {
           "/api/cloudflare/split",
           {
             method:
-              "POST",
+              "PATCH",
             headers: {
               "Content-Type":
                 "application/json",
@@ -980,12 +983,6 @@ export default function SplitRecordingPage() {
             body:
               JSON.stringify({
                 recordingId,
-                sourceRecordingId:
-                  selectedSource.id,
-                startSeconds:
-                  start,
-                endSeconds:
-                  end,
                 title:
                   title.trim(),
                 transcript:
@@ -1003,9 +1000,6 @@ export default function SplitRecordingPage() {
             id: string;
             title: string;
           };
-
-          physicalAudioClip?: boolean;
-          originalPreserved?: boolean;
           error?: string;
         }>(response);
 
@@ -1015,41 +1009,8 @@ export default function SplitRecordingPage() {
       ) {
         throw new Error(
           result.error ||
-            "The separate answer could not be created.",
+            "The audio split was saved, but its transcript or details could not be updated. Open Story Studio to review the new split.",
         );
-      }
-
-      let storyCreated =
-        false;
-
-      if (
-        transcript.trim()
-      ) {
-        const storyResponse =
-          await fetch(
-            "/api/cloudflare/story",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify({
-                  trackId:
-                    result.recording
-                      .id,
-                  mode:
-                    "create",
-                }),
-            },
-          );
-
-        storyCreated =
-          storyResponse.ok;
       }
 
       setMessage({
@@ -1057,9 +1018,7 @@ export default function SplitRecordingPage() {
 
         text:
           transcript.trim()
-            ? storyCreated
-              ? "Separate answer created with its own physical audio file, transcript, and family story. The original recording remains untouched."
-              : "Separate answer and transcript created with its own physical audio file. The family story can be created later in Story Studio."
+            ? "Separate answer and transcript created with its own physical audio file. Review and edit the transcript in Story Studio, then create the family story when you are ready."
             : "Separate answer created with its own physical audio file. The original recording remains untouched.",
       });
 
