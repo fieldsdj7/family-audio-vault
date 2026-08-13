@@ -984,47 +984,12 @@ export default function SplitRecordingPage() {
         );
       }
 
-      let storyCreated =
-        false;
-
-      if (
-        transcript.trim()
-      ) {
-        const storyResponse =
-          await fetch(
-            "/api/cloudflare/story",
-            {
-              method:
-                "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-
-              body:
-                JSON.stringify({
-                  trackId:
-                    result.recording
-                      .id,
-                  mode:
-                    "create",
-                }),
-            },
-          );
-
-        storyCreated =
-          storyResponse.ok;
-      }
-
       setMessage({
         type: "success",
 
         text:
           transcript.trim()
-            ? storyCreated
-              ? "Separate answer created with its own physical audio file, transcript, and family story. The original recording remains untouched."
-              : "Separate answer and transcript created with its own physical audio file. The family story can be created later in Story Studio."
+            ? "Separate answer and transcript created with its own physical audio file. Review and edit the transcript in Story Studio, then create the family story when you are ready."
             : "Separate answer created with its own physical audio file. The original recording remains untouched.",
       });
 
