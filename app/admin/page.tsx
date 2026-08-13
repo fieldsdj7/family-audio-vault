@@ -86,15 +86,6 @@ type KnownSpeakerReference = {
   file: File;
 };
 
-type SavedTranscriptSegment = {
-  id: string;
-  segment_index: number;
-  start_seconds: number;
-  end_seconds: number;
-  speaker_label: string | null;
-  text: string;
-};
-
 const vaults: {
   name: VaultPerson;
   displayName: string;
@@ -858,32 +849,6 @@ async function transcribeRecording(
   );
 }
 
-function formatTranscriptTime(
-  seconds: number,
-) {
-  const safeSeconds =
-    Math.max(
-      0,
-      Math.floor(
-        Number.isFinite(seconds)
-          ? seconds
-          : 0,
-      ),
-    );
-
-  const minutes =
-    Math.floor(
-      safeSeconds / 60,
-    );
-
-  const remaining =
-    safeSeconds % 60;
-
-  return `${minutes}:${String(
-    remaining,
-  ).padStart(2, '0')}`;
-}
-
 function formatTotalAudioTime(
   seconds: number,
 ) {
@@ -947,54 +912,6 @@ function audioDurationFromUrl(
   );
 }
 
-function findTranscriptRange(
-  transcript: string,
-  segmentText: string,
-) {
-  const words =
-    segmentText.match(
-      /[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu,
-    ) || [];
-
-  if (!words.length) {
-    return null;
-  }
-
-  const escapedWords =
-    words
-      .slice(0, Math.min(10, words.length))
-      .map((word) =>
-        word.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          '\\$&',
-        ),
-      );
-
-  try {
-    const pattern =
-      new RegExp(
-        escapedWords.join(
-          '[^\\p{L}\\p{N}]+',
-        ),
-        'iu',
-      );
-
-    const match =
-      pattern.exec(transcript);
-
-    if (!match) {
-      return null;
-    }
-
-    return {
-      start: match.index,
-      end: match.index + match[0].length,
-    };
-  } catch {
-    return null;
-  }
-}
-
 export default function AdminUpload() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -1030,11 +947,8 @@ export default function AdminUpload() {
   const [speaker2Name, setSpeaker2Name] = useState('');
   const [editorQuestionId, setEditorQuestionId] = useState('');
   const [editorCategory, setEditorCategory] = useState('General');
-
-  const [transcriptSegments, setTranscriptSegments] =
-    useState<SavedTranscriptSegment[]>([]);
-  const [loadingTranscriptSegments, setLoadingTranscriptSegments] =
-    useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [jumpTime, setJumpTime] = useState('');
 
   const [photos, setPhotos] = useState<StoryPhoto[]>([]);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
@@ -1061,7 +975,6 @@ export default function AdminUpload() {
   } | null>(null);
 
   const editorAudioRef = useRef<HTMLAudioElement | null>(null);
-  const transcriptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const durationCacheRef = useRef<Map<string, number>>(new Map());
 
   const [vaultAudioSeconds, setVaultAudioSeconds] =
@@ -1085,10 +998,8 @@ export default function AdminUpload() {
   useEffect(() => {
     if (isAdmin && selectedTrackId) {
       void loadPhotos(selectedTrackId);
-      void loadTranscriptSegments(selectedTrackId);
     } else {
       setPhotos([]);
-      setTranscriptSegments([]);
     }
   }, [isAdmin, selectedTrackId]);
 
@@ -1348,101 +1259,89 @@ export default function AdminUpload() {
     window.history.replaceState({}, '', url);
   }
 
-  async function loadTranscriptSegments(
-    recordingId: string,
-  ) {
-    setLoadingTranscriptSegments(true);
-
-    try {
-      const response = await fetch(
-        `/api/cloudflare/transcript-segments/${encodeURIComponent(
-          recordingId,
-        )}`,
-        {
-          cache: 'no-store',
-        },
-      );
-
-      const data =
-        (await response.json()) as {
-          segments?: SavedTranscriptSegment[];
-          error?: string;
-        };
-
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            'Could not load transcript timestamps.',
-        );
-      }
-
-      setTranscriptSegments(
-        data.segments || [],
-      );
-    } catch (error) {
-      console.error(
-        'Could not load transcript timestamps.',
-        error,
-      );
-
-      setTranscriptSegments([]);
-    } finally {
-      setLoadingTranscriptSegments(false);
-    }
-  }
-
-  async function seekToTranscriptSegment(
-    segment: SavedTranscriptSegment,
-  ) {
-    const audio =
-      editorAudioRef.current;
+  function moveAudioBy(seconds: number) {
+    const audio = editorAudioRef.current;
 
     if (!audio) {
       setEditorMessage({
         type: 'error',
-        text:
-          'The audio player is not ready yet.',
+        text: 'The audio player is not ready yet.',
       });
       return;
     }
 
-    audio.currentTime =
-      Math.max(
-        0,
-        segment.start_seconds,
-      );
+    const maximum =
+      Number.isFinite(audio.duration)
+        ? audio.duration
+        : Number.MAX_SAFE_INTEGER;
 
-    const textarea =
-      transcriptTextareaRef.current;
+    audio.currentTime = Math.max(
+      0,
+      Math.min(maximum, audio.currentTime + seconds),
+    );
+  }
 
-    if (textarea) {
-      const range =
-        findTranscriptRange(
-          transcriptDraft,
-          segment.text,
-        );
+  function changePlaybackRate(rate: number) {
+    setPlaybackRate(rate);
 
-      textarea.focus();
+    const audio = editorAudioRef.current;
 
-      if (range) {
-        textarea.setSelectionRange(
-          range.start,
-          range.end,
-        );
-      }
+    if (audio) {
+      audio.playbackRate = rate;
     }
+  }
 
-    try {
-      await audio.play();
-    } catch {
+  function jumpToEnteredTime() {
+    const audio = editorAudioRef.current;
+
+    if (!audio) {
       setEditorMessage({
-        type: 'success',
-        text:
-          `Audio moved to ${formatTranscriptTime(
-            segment.start_seconds,
-          )}. Press Play if your browser did not start it automatically.`,
+        type: 'error',
+        text: 'The audio player is not ready yet.',
       });
+      return;
     }
+
+    const value = jumpTime.trim();
+
+    if (!value) return;
+
+    let seconds = Number.NaN;
+
+    if (value.includes(':')) {
+      const parts = value.split(':').map((part) => Number(part));
+
+      if (
+        parts.length === 2 &&
+        parts.every((part) => Number.isFinite(part))
+      ) {
+        seconds = parts[0] * 60 + parts[1];
+      } else if (
+        parts.length === 3 &&
+        parts.every((part) => Number.isFinite(part))
+      ) {
+        seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+      }
+    } else {
+      seconds = Number(value);
+    }
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      setEditorMessage({
+        type: 'error',
+        text: 'Enter a time like 6:38, 15:00, or 90.',
+      });
+      return;
+    }
+
+    audio.currentTime = Math.min(
+      seconds,
+      Number.isFinite(audio.duration)
+        ? audio.duration
+        : seconds,
+    );
+
+    setEditorMessage(null);
   }
 
   async function loadPhotos(recordingId: string) {
@@ -1928,10 +1827,6 @@ export default function AdminUpload() {
       );
 
       await fetchTracks(
-        trackId,
-      );
-
-      await loadTranscriptSegments(
         trackId,
       );
 
@@ -2666,8 +2561,67 @@ export default function AdminUpload() {
                       controls
                       preload="metadata"
                       src={`/api/cloudflare/audio/${selectedTrack.id}`}
+                      onLoadedMetadata={(event) => {
+                        event.currentTarget.playbackRate = playbackRate;
+                      }}
                       className="w-full"
                     />
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => moveAudioBy(-10)}
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                      >
+                        −10 sec
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => moveAudioBy(10)}
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                      >
+                        +10 sec
+                      </button>
+
+                      <select
+                        value={playbackRate}
+                        onChange={(event) =>
+                          changePlaybackRate(Number(event.target.value))
+                        }
+                        className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                        aria-label="Playback speed"
+                      >
+                        <option value={0.75}>0.75×</option>
+                        <option value={1}>1×</option>
+                        <option value={1.25}>1.25×</option>
+                        <option value={1.5}>1.5×</option>
+                      </select>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={jumpTime}
+                          onChange={(event) => setJumpTime(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              jumpToEnteredTime();
+                            }
+                          }}
+                          placeholder="6:38"
+                          className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+                          aria-label="Jump to time"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => jumpToEnteredTime()}
+                          className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
+                        >
+                          Jump
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   <details className="rounded-2xl border border-stone-200 bg-[#f8f3e9]">
@@ -2902,68 +2856,15 @@ export default function AdminUpload() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-stone-300 bg-white">
-                      <div className="border-b border-stone-200 bg-[#f8f3e9] px-4 py-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-xs text-stone-500">
-                            Edit the transcript in the box below. Click a timestamp to move the audio
-                            and jump the editor to that section.
-                          </p>
-
-                          {loadingTranscriptSegments && (
-                            <Loader2 className="h-4 w-4 animate-spin text-[#a66b27]" />
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid min-h-[360px] grid-cols-[76px_minmax(0,1fr)]">
-                        <div className="max-h-[520px] overflow-y-auto border-r border-stone-200 bg-[#fbf7ef] p-2">
-                          {!loadingTranscriptSegments &&
-                          transcriptSegments.length > 0 ? (
-                            <div className="space-y-1.5">
-                              {transcriptSegments.map((segment) => (
-                                <button
-                                  key={segment.id}
-                                  type="button"
-                                  title={
-                                    segment.speaker_label
-                                      ? `${segment.speaker_label}: ${segment.text}`
-                                      : segment.text
-                                  }
-                                  onClick={() =>
-                                    void seekToTranscriptSegment(
-                                      segment,
-                                    )
-                                  }
-                                  className="w-full rounded-lg border border-stone-200 bg-white px-2 py-2 text-center text-xs font-bold tabular-nums text-[#80542a] hover:border-[#b57931] hover:bg-[#f4e7cf]"
-                                >
-                                  {formatTranscriptTime(
-                                    segment.start_seconds,
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          ) : !loadingTranscriptSegments ? (
-                            <p className="px-1 py-2 text-center text-[11px] leading-relaxed text-stone-400">
-                              No saved timestamps
-                            </p>
-                          ) : null}
-                        </div>
-
-                        <textarea
-                          ref={transcriptTextareaRef}
-                          rows={16}
-                          value={transcriptDraft}
-                          onChange={(event) =>
-                            setTranscriptDraft(
-                              event.target.value,
-                            )
-                          }
-                          placeholder="The transcript will appear here."
-                          className="min-h-[360px] w-full resize-y border-0 bg-white px-4 py-3 leading-relaxed outline-none"
-                        />
-                      </div>
-                    </div>
+                    <textarea
+                      rows={16}
+                      value={transcriptDraft}
+                      onChange={(event) =>
+                        setTranscriptDraft(event.target.value)
+                      }
+                      placeholder="The transcript will appear here."
+                      className="min-h-[420px] w-full resize-y rounded-xl border border-stone-300 bg-white px-4 py-3 leading-relaxed"
+                    />
                   </div>
 
                   <div className="border-t border-stone-200 pt-6">
