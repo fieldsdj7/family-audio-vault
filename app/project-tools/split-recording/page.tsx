@@ -113,27 +113,55 @@ function writeString(
   }
 }
 
-function audioBufferToWav(
+function audioBufferToSpeechWav(
   buffer: AudioBuffer,
+  startSeconds: number,
+  endSeconds: number,
 ) {
-  const channels =
-    buffer.numberOfChannels;
+  const targetSampleRate =
+    16000;
 
-  const sampleRate =
-    buffer.sampleRate;
+  const safeStart =
+    Math.max(
+      0,
+      Math.min(
+        startSeconds,
+        buffer.duration,
+      ),
+    );
 
-  const sampleCount =
-    buffer.length;
+  const safeEnd =
+    Math.max(
+      safeStart,
+      Math.min(
+        endSeconds,
+        buffer.duration,
+      ),
+    );
 
-  const bytesPerSample = 2;
+  const durationSeconds =
+    safeEnd -
+    safeStart;
 
-  const blockAlign =
-    channels *
-    bytesPerSample;
+  if (
+    durationSeconds <= 0
+  ) {
+    throw new Error(
+      "The selected clip does not contain any audio.",
+    );
+  }
+
+  const outputSamples =
+    Math.max(
+      1,
+      Math.floor(
+        durationSeconds *
+          targetSampleRate,
+      ),
+    );
 
   const dataSize =
-    sampleCount *
-    blockAlign;
+    outputSamples * 2;
 
   const output =
     new ArrayBuffer(
@@ -141,7 +169,9 @@ function audioBufferToWav(
     );
 
   const view =
-    new DataView(output);
+    new DataView(
+      output,
+    );
 
   writeString(
     view,
@@ -181,26 +211,25 @@ function audioBufferToWav(
 
   view.setUint16(
     22,
-    channels,
+    1,
     true,
   );
 
   view.setUint32(
     24,
-    sampleRate,
+    targetSampleRate,
     true,
   );
 
   view.setUint32(
     28,
-    sampleRate *
-      blockAlign,
+    targetSampleRate * 2,
     true,
   );
 
   view.setUint16(
     32,
-    blockAlign,
+    2,
     true,
   );
 
@@ -222,10 +251,14 @@ function audioBufferToWav(
     true,
   );
 
+  const sourceRate =
+    buffer.sampleRate;
+
   const channelData =
     Array.from(
       {
-        length: channels,
+        length:
+          buffer.numberOfChannels,
       },
       (_, channel) =>
         buffer.getChannelData(
@@ -237,35 +270,64 @@ function audioBufferToWav(
 
   for (
     let sample = 0;
-    sample < sampleCount;
+    sample < outputSamples;
     sample += 1
   ) {
-    for (
-      let channel = 0;
-      channel < channels;
-      channel += 1
-    ) {
-      const value =
-        Math.max(
-          -1,
-          Math.min(
-            1,
-            channelData[
-              channel
-            ][sample],
-          ),
-        );
+    const sourceTime =
+      safeStart +
+      sample /
+        targetSampleRate;
 
-      view.setInt16(
-        offset,
-        value < 0
-          ? value * 0x8000
-          : value * 0x7fff,
-        true,
+    const sourceFrame =
+      Math.min(
+        buffer.length - 1,
+        Math.floor(
+          sourceTime *
+            sourceRate,
+        ),
       );
 
-      offset += 2;
+    let value = 0;
+
+    for (
+      let channel = 0;
+      channel <
+      channelData.length;
+      channel += 1
+    ) {
+      value +=
+        channelData[
+          channel
+        ][sourceFrame] ||
+        0;
     }
+
+    value /=
+      Math.max(
+        1,
+        channelData.length,
+      );
+
+    value =
+      Math.max(
+        -1,
+        Math.min(
+          1,
+          value,
+        ),
+      );
+
+    view.setInt16(
+      offset,
+      value < 0
+        ? value *
+          0x8000
+        : value *
+          0x7fff,
+      true,
+    );
+
+    offset += 2;
   }
 
   return output;
@@ -303,89 +365,11 @@ async function createAudioClip(
         sourceData.slice(0),
       );
 
-    const safeStart =
-      Math.max(
-        0,
-        Math.min(
-          startSeconds,
-          decoded.duration,
-        ),
-      );
-
-    const safeEnd =
-      Math.max(
-        safeStart,
-        Math.min(
-          endSeconds,
-          decoded.duration,
-        ),
-      );
-
-    if (
-      safeEnd <=
-      safeStart
-    ) {
-      throw new Error(
-        "The selected clip does not contain any audio.",
-      );
-    }
-
-    const startFrame =
-      Math.floor(
-        safeStart *
-          decoded.sampleRate,
-      );
-
-    const endFrame =
-      Math.min(
-        decoded.length,
-        Math.ceil(
-          safeEnd *
-            decoded.sampleRate,
-        ),
-      );
-
-    const frameCount =
-      endFrame -
-      startFrame;
-
-    const clipped =
-      new AudioBuffer({
-        length:
-          frameCount,
-        numberOfChannels:
-          decoded.numberOfChannels,
-        sampleRate:
-          decoded.sampleRate,
-      });
-
-    for (
-      let channel = 0;
-      channel <
-      decoded.numberOfChannels;
-      channel += 1
-    ) {
-      const sourceChannel =
-        decoded.getChannelData(
-          channel,
-        );
-
-      const destination =
-        clipped.getChannelData(
-          channel,
-        );
-
-      destination.set(
-        sourceChannel.subarray(
-          startFrame,
-          endFrame,
-        ),
-      );
-    }
-
     const wavData =
-      audioBufferToWav(
-        clipped,
+      audioBufferToSpeechWav(
+        decoded,
+        startSeconds,
+        endSeconds,
       );
 
     return new File(
@@ -453,6 +437,11 @@ export default function SplitRecordingPage() {
     playingSeconds,
     setPlayingSeconds,
   ] = useState(0);
+
+  const [
+    jumpTime,
+    setJumpTime,
+  ] = useState("");
 
   const [
     startSeconds,
@@ -641,6 +630,7 @@ export default function SplitRecordingPage() {
 
     setDuration(0);
     setPlayingSeconds(0);
+    setJumpTime("");
     setStartSeconds("0");
     setEndSeconds("");
     setTitle("");
@@ -659,6 +649,149 @@ export default function SplitRecordingPage() {
       track?.transcript ||
         "",
     );
+  }
+
+  function parseJumpTime(
+    value: string,
+  ) {
+    const trimmed =
+      value.trim();
+
+    if (!trimmed) {
+      return Number.NaN;
+    }
+
+    if (
+      /^\d+$/.test(
+        trimmed,
+      )
+    ) {
+      return Number(
+        trimmed,
+      );
+    }
+
+    const parts =
+      trimmed
+        .split(":")
+        .map((part) =>
+          Number(part),
+        );
+
+    if (
+      parts.some(
+        (part) =>
+          !Number.isFinite(
+            part,
+          ),
+      )
+    ) {
+      return Number.NaN;
+    }
+
+    if (
+      parts.length === 2
+    ) {
+      const [
+        minutes,
+        seconds,
+      ] = parts;
+
+      if (
+        seconds < 0 ||
+        seconds >= 60
+      ) {
+        return Number.NaN;
+      }
+
+      return (
+        minutes * 60 +
+        seconds
+      );
+    }
+
+    if (
+      parts.length === 3
+    ) {
+      const [
+        hours,
+        minutes,
+        seconds,
+      ] = parts;
+
+      if (
+        minutes < 0 ||
+        minutes >= 60 ||
+        seconds < 0 ||
+        seconds >= 60
+      ) {
+        return Number.NaN;
+      }
+
+      return (
+        hours * 3600 +
+        minutes * 60 +
+        seconds
+      );
+    }
+
+    return Number.NaN;
+  }
+
+  async function jumpToTime() {
+    const audio =
+      audioRef.current;
+
+    if (!audio) {
+      setMessage({
+        type: "error",
+        text:
+          "The audio player is not ready yet.",
+      });
+      return;
+    }
+
+    const seconds =
+      parseJumpTime(
+        jumpTime,
+      );
+
+    if (
+      !Number.isFinite(
+        seconds,
+      ) ||
+      seconds < 0
+    ) {
+      setMessage({
+        type: "error",
+        text:
+          "Enter a time like 6:38, 15:00, 1:02:15, or a number of seconds.",
+      });
+      return;
+    }
+
+    const safeSeconds =
+      duration > 0
+        ? Math.min(
+            seconds,
+            duration,
+          )
+        : seconds;
+
+    audio.currentTime =
+      safeSeconds;
+
+    setPlayingSeconds(
+      safeSeconds,
+    );
+
+    setMessage(null);
+
+    try {
+      await audio.play();
+    } catch {
+      // Jump still succeeds if the browser blocks autoplay.
+    }
   }
 
   function captureTime(
@@ -767,12 +900,12 @@ export default function SplitRecordingPage() {
 
       if (
         clip.size >
-        95 *
+        24 *
           1024 *
           1024
       ) {
         throw new Error(
-          "This audio section is too large to save as a split recording. Choose a shorter section.",
+          "This audio section is too large to save safely in one split. Choose a shorter section.",
         );
       }
 
@@ -1116,6 +1249,47 @@ export default function SplitRecordingPage() {
                         playingSeconds,
                       )}
                     </span>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={
+                          jumpTime
+                        }
+                        onChange={(
+                          event,
+                        ) =>
+                          setJumpTime(
+                            event
+                              .target
+                              .value,
+                          )
+                        }
+                        onKeyDown={(
+                          event,
+                        ) => {
+                          if (
+                            event.key ===
+                            "Enter"
+                          ) {
+                            event.preventDefault();
+                            void jumpToTime();
+                          }
+                        }}
+                        placeholder="6:38"
+                        className="w-24 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm"
+                        aria-label="Jump to time"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void jumpToTime()
+                        }
+                        className="rounded-lg border border-stone-300 bg-[#fffaf0] px-3 py-2 font-semibold text-stone-700 hover:border-[#a66b27]"
+                      >
+                        Jump
+                      </button>
+                    </div>
 
                     <button
                       type="button"
