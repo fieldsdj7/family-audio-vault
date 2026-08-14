@@ -5,13 +5,17 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle,
+  ClipboardCopy,
   ClipboardList,
+  Link2,
   Loader2,
   Pencil,
   Plus,
   Save,
+  Send,
   ShieldCheck,
   Trash2,
+  X,
 } from 'lucide-react';
 
 type Question = {
@@ -32,6 +36,25 @@ type MemberResponse = {
   error?: string;
 };
 
+type VaultPerson = 'Papa' | 'Dad' | 'Mom';
+
+type StorytellerCreateResponse = {
+  request?: {
+    id: string;
+    vaultPerson: VaultPerson;
+    questionId: string;
+    questionNumber: number;
+    questionText: string;
+    recipientName: string | null;
+    recipientEmail: string | null;
+    recipientPhone: string | null;
+    status: string;
+    expiresAt: string | null;
+  };
+  storytellerUrl?: string;
+  error?: string;
+};
+
 export default function QuestionTrackerPage() {
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -48,6 +71,17 @@ export default function QuestionTrackerPage() {
   const [questionNumber, setQuestionNumber] = useState('');
   const [questionText, setQuestionText] = useState('');
   const [search, setSearch] = useState('');
+
+  const [sendingQuestion, setSendingQuestion] = useState<Question | null>(null);
+  const [storytellerVaultPerson, setStorytellerVaultPerson] =
+    useState<VaultPerson>('Papa');
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [recipientPhone, setRecipientPhone] = useState('');
+  const [creatingStoryteller, setCreatingStoryteller] = useState(false);
+  const [storytellerUrl, setStorytellerUrl] = useState('');
+  const [storytellerError, setStorytellerError] = useState('');
+  const [copied, setCopied] = useState(false);
 
   const visibleQuestions = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -139,6 +173,86 @@ export default function QuestionTrackerPage() {
       top: 0,
       behavior: 'smooth',
     });
+  }
+
+  function openStoryteller(question: Question) {
+    setSendingQuestion(question);
+    setStorytellerVaultPerson('Papa');
+    setRecipientName('');
+    setRecipientEmail('');
+    setRecipientPhone('');
+    setStorytellerUrl('');
+    setStorytellerError('');
+    setCopied(false);
+  }
+
+  function closeStoryteller() {
+    if (creatingStoryteller) return;
+
+    setSendingQuestion(null);
+    setStorytellerUrl('');
+    setStorytellerError('');
+    setCopied(false);
+  }
+
+  async function createStorytellerRequest() {
+    if (!sendingQuestion) return;
+
+    setCreatingStoryteller(true);
+    setStorytellerError('');
+    setStorytellerUrl('');
+    setCopied(false);
+
+    try {
+      const response = await fetch('/api/cloudflare/storyteller-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          vaultPerson: storytellerVaultPerson,
+          questionId: sendingQuestion.id,
+          recipientName: recipientName.trim() || null,
+          recipientEmail: recipientEmail.trim() || null,
+          recipientPhone: recipientPhone.trim() || null,
+        }),
+      });
+
+      const data = (await response.json()) as StorytellerCreateResponse;
+
+      if (!response.ok || !data.storytellerUrl) {
+        throw new Error(
+          data.error || 'Could not create the Storyteller link.',
+        );
+      }
+
+      setStorytellerUrl(data.storytellerUrl);
+    } catch (error) {
+      setStorytellerError(
+        error instanceof Error
+          ? error.message
+          : 'Could not create the Storyteller link.',
+      );
+    } finally {
+      setCreatingStoryteller(false);
+    }
+  }
+
+  async function copyStorytellerLink() {
+    if (!storytellerUrl) return;
+
+    try {
+      await navigator.clipboard.writeText(storytellerUrl);
+      setCopied(true);
+
+      window.setTimeout(() => {
+        setCopied(false);
+      }, 2500);
+    } catch {
+      setStorytellerError(
+        'The browser could not copy the link automatically. Select the link below and copy it manually.',
+      );
+    }
   }
 
   async function saveQuestion(event: FormEvent) {
@@ -450,7 +564,16 @@ export default function QuestionTrackerPage() {
                     </h3>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openStoryteller(question)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-[#d7bd8b] bg-[#fbf3e3] px-3 py-2 text-sm font-semibold text-[#7a4a19] hover:border-[#a66b27] hover:bg-[#f6e6c8]"
+                    >
+                      <Send className="h-4 w-4" />
+                      Send Question
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => editQuestion(question)}
@@ -489,6 +612,213 @@ export default function QuestionTrackerPage() {
           </div>
         </section>
       </div>
+
+      {sendingQuestion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-[#ddc79f] bg-[#fffaf0] shadow-2xl">
+            <div className="flex items-start justify-between border-b border-stone-200 p-5 md:p-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[.18em] text-[#a66b27]">
+                  Storyteller
+                </p>
+
+                <h2 className="mt-1 font-serif text-3xl text-stone-900">
+                  Send a question
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeStoryteller}
+                disabled={creatingStoryteller}
+                aria-label="Close"
+                className="rounded-lg p-2 text-stone-500 hover:bg-stone-100 hover:text-stone-800 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-5 md:p-6">
+              <div className="rounded-2xl border border-stone-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-[.15em] text-[#a66b27]">
+                  Question {sendingQuestion.question_number}
+                </p>
+
+                <p className="mt-2 font-serif text-xl leading-relaxed text-stone-900">
+                  {sendingQuestion.question_text}
+                </p>
+              </div>
+
+              {!storytellerUrl ? (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-semibold">
+                      Save answer in which Vault?
+                    </label>
+
+                    <select
+                      value={storytellerVaultPerson}
+                      onChange={(event) =>
+                        setStorytellerVaultPerson(
+                          event.target.value as VaultPerson,
+                        )
+                      }
+                      className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
+                    >
+                      <option value="Papa">Papa — Bill</option>
+                      <option value="Dad">Dad — Dan</option>
+                      <option value="Mom">Mom — Ivy</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-semibold">
+                      Recipient name
+                      <span className="ml-1 font-normal text-stone-500">
+                        optional
+                      </span>
+                    </label>
+
+                    <input
+                      value={recipientName}
+                      onChange={(event) => setRecipientName(event.target.value)}
+                      placeholder="Example: Michael"
+                      className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
+                    />
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-semibold">
+                        Email
+                        <span className="ml-1 font-normal text-stone-500">
+                          optional
+                        </span>
+                      </label>
+
+                      <input
+                        type="email"
+                        value={recipientEmail}
+                        onChange={(event) =>
+                          setRecipientEmail(event.target.value)
+                        }
+                        placeholder="name@example.com"
+                        className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-sm font-semibold">
+                        Phone
+                        <span className="ml-1 font-normal text-stone-500">
+                          optional
+                        </span>
+                      </label>
+
+                      <input
+                        type="tel"
+                        value={recipientPhone}
+                        onChange={(event) =>
+                          setRecipientPhone(event.target.value)
+                        }
+                        placeholder="555-555-5555"
+                        className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 outline-none focus:border-[#a66b27]"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="rounded-xl bg-[#f6f0e5] p-3 text-sm leading-relaxed text-stone-600">
+                    For now, the Vault will create a private link for you to copy
+                    into your normal text message or email. It will not send
+                    anything automatically.
+                  </p>
+
+                  {storytellerError && (
+                    <div className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      {storytellerError}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void createStorytellerRequest()}
+                    disabled={creatingStoryteller}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3.5 font-semibold text-white hover:bg-[#293127] disabled:bg-stone-400"
+                  >
+                    {creatingStoryteller ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <Link2 className="h-5 w-5" />
+                    )}
+
+                    {creatingStoryteller
+                      ? 'Creating private link…'
+                      : 'Create Storyteller Link'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="flex items-center gap-2 font-semibold text-emerald-900">
+                      <CheckCircle className="h-5 w-5" />
+                      Storyteller link created
+                    </p>
+
+                    <p className="mt-2 text-sm leading-relaxed text-emerald-800">
+                      Copy this link and send it to the person who will answer
+                      the question.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-semibold">
+                      Private recording link
+                    </label>
+
+                    <textarea
+                      readOnly
+                      value={storytellerUrl}
+                      rows={3}
+                      onFocus={(event) => event.currentTarget.select()}
+                      className="w-full resize-none rounded-xl border border-stone-300 bg-white px-4 py-3 text-sm outline-none"
+                    />
+                  </div>
+
+                  {storytellerError && (
+                    <div className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      {storytellerError}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void copyStorytellerLink()}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#3b4536] px-5 py-3.5 font-semibold text-white hover:bg-[#293127]"
+                  >
+                    {copied ? (
+                      <CheckCircle className="h-5 w-5" />
+                    ) : (
+                      <ClipboardCopy className="h-5 w-5" />
+                    )}
+
+                    {copied ? 'Copied!' : 'Copy Link'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={closeStoryteller}
+                    className="w-full rounded-xl border border-stone-300 bg-white px-5 py-3 font-semibold text-stone-700 hover:border-[#a66b27]"
+                  >
+                    Done
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
