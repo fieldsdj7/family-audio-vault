@@ -14,148 +14,117 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-const R2_BUCKET_NAME = "family-audio-vault-files";
-const R2_ACCOUNT_ID = "df9e74cde1afebdc705f24c403b336f4";
-const SIGNED_URL_SECONDS = 15 * 60;
-
-function encodeR2Path(value: string) {
-  return value
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-}
-
-function toHex(buffer: ArrayBuffer) {
-  return Array.from(new Uint8Array(buffer))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-async function sha256(value: string) {
-  const bytes = new TextEncoder().encode(value);
-  return toHex(await crypto.subtle.digest("SHA-256", bytes));
-}
-
-async function hmac(
-  key: ArrayBuffer,
-  value: string,
-) {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    key,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-
-  return crypto.subtle.sign(
-    "HMAC",
-    cryptoKey,
-    new TextEncoder().encode(value),
-  );
-}
-
-function amzDate(date: Date) {
-  return date
-    .toISOString()
-    .replace(/[:-]|\.\d{3}/g, "");
-}
-
-async function createPresignedGetUrl(
-  accountId: string,
-  accessKeyId: string,
-  secretAccessKey: string,
+function contentTypeForPath(
   storagePath: string,
+  storedType: string | null,
 ) {
-  const now = new Date();
-  const requestDate = amzDate(now);
-  const shortDate = requestDate.slice(0, 8);
-  const region = "auto";
-  const service = "s3";
+  const extension =
+    storagePath
+      .split(".")
+      .pop()
+      ?.toLowerCase();
 
-  const host =
-    `${R2_BUCKET_NAME}.${accountId}.r2.cloudflarestorage.com`;
+  switch (extension) {
+    case "m4a":
+      return "audio/mp4";
+    case "mp3":
+      return "audio/mpeg";
+    case "ogg":
+    case "oga":
+      return "audio/ogg";
+    case "wav":
+      return "audio/wav";
+    case "webm":
+      return "audio/webm";
+    default:
+      return (
+        storedType ||
+        "application/octet-stream"
+      );
+  }
+}
 
-  const canonicalUri =
-    `/${encodeR2Path(storagePath)}`;
-
-  const credentialScope =
-    `${shortDate}/${region}/${service}/aws4_request`;
-
-  const params: Array<[string, string]> = [
-    ["X-Amz-Algorithm", "AWS4-HMAC-SHA256"],
-    [
-      "X-Amz-Credential",
-      `${accessKeyId}/${credentialScope}`,
-    ],
-    ["X-Amz-Date", requestDate],
-    ["X-Amz-Expires", String(SIGNED_URL_SECONDS)],
-    ["X-Amz-SignedHeaders", "host"],
-  ];
-
-  const canonicalQuery = params
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([key, value]) =>
-        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
-
-  const canonicalRequest = [
-    "GET",
-    canonicalUri,
-    canonicalQuery,
-    `host:${host}\n`,
-    "host",
-    "UNSIGNED-PAYLOAD",
-  ].join("\n");
-
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    requestDate,
-    credentialScope,
-    await sha256(canonicalRequest),
-  ].join("\n");
-
-  const encoder = new TextEncoder();
-
-  const secretBytes =
-    encoder.encode(
-      `AWS4${secretAccessKey}`,
+function applyRangeHeaders(
+  object: R2ObjectBody,
+  headers: Headers,
+  requestedRange: boolean,
+) {
+  if (
+    !requestedRange ||
+    !object.range
+  ) {
+    headers.set(
+      "content-length",
+      object.size.toString(),
     );
 
-  const dateKey = await hmac(
-    secretBytes.buffer.slice(
-      secretBytes.byteOffset,
-      secretBytes.byteOffset +
-        secretBytes.byteLength,
-    ) as ArrayBuffer,
-    shortDate,
+    return 200;
+  }
+
+  const range =
+    object.range as {
+      offset?: number;
+      length?: number;
+      suffix?: number;
+    };
+
+  let start = 0;
+  let length =
+    object.size;
+
+  if (
+    typeof range.suffix ===
+    "number"
+  ) {
+    length =
+      Math.min(
+        range.suffix,
+        object.size,
+      );
+
+    start =
+      object.size -
+      length;
+  } else {
+    start =
+      typeof range.offset ===
+      "number"
+        ? range.offset
+        : 0;
+
+    length =
+      typeof range.length ===
+      "number"
+        ? range.length
+        : object.size -
+          start;
+  }
+
+  const end =
+    Math.min(
+      start +
+        length -
+        1,
+      object.size -
+        1,
+    );
+
+  const actualLength =
+    end -
+    start +
+    1;
+
+  headers.set(
+    "content-length",
+    actualLength.toString(),
   );
 
-  const regionKey = await hmac(dateKey, region);
-  const serviceKey = await hmac(regionKey, service);
-  const signingKey = await hmac(
-    serviceKey,
-    "aws4_request",
+  headers.set(
+    "content-range",
+    `bytes ${start}-${end}/${object.size}`,
   );
 
-  const signature = toHex(
-    await hmac(signingKey, stringToSign),
-  );
-
-  const finalQuery = [
-    ...params,
-    ["X-Amz-Signature", signature] as [string, string],
-  ]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([key, value]) =>
-        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
-
-  return `https://${host}${canonicalUri}?${finalQuery}`;
+  return 206;
 }
 
 export async function GET(
@@ -163,32 +132,54 @@ export async function GET(
   context: RouteContext,
 ) {
   try {
-    const member = await requireVaultMember(request);
-    const { id } = await context.params;
+    const member =
+      await requireVaultMember(
+        request,
+      );
+
+    const { id } =
+      await context.params;
 
     if (!id.trim()) {
       return Response.json(
-        { error: "A recording ID is required." },
-        { status: 400 },
+        {
+          error:
+            "A recording ID is required.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    const { db } = await getVaultBindings();
+    const {
+      db,
+      files,
+    } =
+      await getVaultBindings();
 
-    const audio = await db
-      .prepare(
-        `SELECT storage_path, vault_person
-         FROM audio_tracks
-         WHERE id = ?
-           AND trashed_at IS NULL`,
-      )
-      .bind(id)
-      .first<AudioRow>();
+    const audio =
+      await db
+        .prepare(
+          `SELECT
+             storage_path,
+             vault_person
+           FROM audio_tracks
+           WHERE id = ?
+             AND trashed_at IS NULL`,
+        )
+        .bind(id)
+        .first<AudioRow>();
 
     if (!audio) {
       return Response.json(
-        { error: "That recording was not found." },
-        { status: 404 },
+        {
+          error:
+            "That recording was not found.",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
@@ -202,52 +193,108 @@ export async function GET(
           error:
             "You do not have access to that recording.",
         },
-        { status: 403 },
+        {
+          status: 403,
+        },
       );
     }
 
-    if (!audio.storage_path) {
+    if (
+      !audio.storage_path
+    ) {
       return Response.json(
         {
           error:
             "The audio file has not been copied to Cloudflare yet.",
         },
-        { status: 404 },
+        {
+          status: 404,
+        },
       );
     }
 
-    const accessKeyId =
-      process.env.R2_ACCESS_KEY_ID?.trim();
+    const rangeHeader =
+      request.headers.get(
+        "range",
+      );
 
-    const secretAccessKey =
-      process.env.R2_SECRET_ACCESS_KEY?.trim();
+    const object =
+      await files.get(
+        audio.storage_path,
+        rangeHeader
+          ? {
+              range:
+                request.headers,
+            }
+          : undefined,
+      );
 
     if (
-      !accessKeyId ||
-      !secretAccessKey
+      !object ||
+      !("body" in object)
     ) {
       return Response.json(
         {
           error:
-            "Direct private audio access has not been fully configured.",
+            "The audio file could not be found in storage.",
         },
-        { status: 500 },
+        {
+          status: 404,
+        },
       );
     }
 
-    const signedUrl =
-      await createPresignedGetUrl(
-        R2_ACCOUNT_ID,
-        accessKeyId,
-        secretAccessKey,
+    const headers =
+      new Headers();
+
+    object.writeHttpMetadata(
+      headers,
+    );
+
+    headers.set(
+      "accept-ranges",
+      "bytes",
+    );
+
+    headers.set(
+      "cache-control",
+      "private, no-store",
+    );
+
+    headers.set(
+      "content-type",
+      contentTypeForPath(
         audio.storage_path,
+        headers.get(
+          "content-type",
+        ),
+      ),
+    );
+
+    headers.set(
+      "etag",
+      object.httpEtag,
+    );
+
+    const status =
+      applyRangeHeaders(
+        object,
+        headers,
+        Boolean(
+          rangeHeader,
+        ),
       );
 
-    return Response.redirect(
-      signedUrl,
-      302,
+    return new Response(
+      object.body,
+      {
+        status,
+        headers,
+      },
     );
   } catch (error) {
-    return vaultAccessResponse(error);
+    return vaultAccessResponse(
+      error,
+    );
   }
 }
