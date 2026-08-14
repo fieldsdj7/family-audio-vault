@@ -1,5 +1,3 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
-
 import {
   getVaultBindings,
   requireVaultMember,
@@ -16,13 +14,8 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-type AudioEnv = CloudflareEnv & {
-  R2_ACCESS_KEY_ID?: string;
-  R2_SECRET_ACCESS_KEY?: string;
-  R2_ACCOUNT_ID?: string;
-};
-
 const R2_BUCKET_NAME = "family-audio-vault-files";
+const R2_ACCOUNT_ID = "df9e74cde1afebdc705f24c403b336f4";
 const SIGNED_URL_SECONDS = 15 * 60;
 
 function encodeR2Path(value: string) {
@@ -223,23 +216,13 @@ export async function GET(
       );
     }
 
-    const { env } = await getCloudflareContext({
-      async: true,
-    });
-
-    const audioEnv = env as AudioEnv;
-
-    const accountId =
-      audioEnv.R2_ACCOUNT_ID?.trim();
-
     const accessKeyId =
-      audioEnv.R2_ACCESS_KEY_ID?.trim();
+      process.env.R2_ACCESS_KEY_ID?.trim();
 
     const secretAccessKey =
-      audioEnv.R2_SECRET_ACCESS_KEY?.trim();
+      process.env.R2_SECRET_ACCESS_KEY?.trim();
 
     if (
-      !accountId ||
       !accessKeyId ||
       !secretAccessKey
     ) {
@@ -254,7 +237,7 @@ export async function GET(
 
     const signedUrl =
       await createPresignedGetUrl(
-        accountId,
+        R2_ACCOUNT_ID,
         accessKeyId,
         secretAccessKey,
         audio.storage_path,
