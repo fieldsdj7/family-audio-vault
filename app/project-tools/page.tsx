@@ -11,7 +11,6 @@ import {
   Gauge,
   Loader2,
   Mic2,
-  Scissors,
   ShieldCheck,
   Trash2,
 } from 'lucide-react';
@@ -46,13 +45,6 @@ const readyCards: ToolCard[] = [
     icon: Trash2,
   },
   {
-    href: '/project-tools/split-recording',
-    title: 'Split Recording',
-    description:
-      'Keep the original recording safe while separating multiple answers into individual recordings.',
-    icon: Scissors,
-  },
-  {
     href: '/project-tools/vault-health',
     title: 'Vault Health & Backups',
     description:
@@ -76,11 +68,8 @@ const readyCards: ToolCard[] = [
 ];
 
 export default function ProjectToolsPage() {
-  const [checkingAccess, setCheckingAccess] =
-    useState(true);
-
-  const [isAdmin, setIsAdmin] =
-    useState(false);
+  const [checkingAccess, setCheckingAccess] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     void checkAccess();
@@ -90,12 +79,9 @@ export default function ProjectToolsPage() {
     setCheckingAccess(true);
 
     try {
-      const response = await fetch(
-        '/api/cloudflare/member',
-        {
-          cache: 'no-store',
-        },
-      );
+      const response = await fetch('/api/cloudflare/member', {
+        cache: 'no-store',
+      });
 
       const data = (await response.json()) as {
         member?: {
@@ -103,10 +89,7 @@ export default function ProjectToolsPage() {
         };
       };
 
-      setIsAdmin(
-        response.ok &&
-          !!data.member?.isAdmin,
-      );
+      setIsAdmin(response.ok && !!data.member?.isAdmin);
     } catch {
       setIsAdmin(false);
     } finally {
@@ -116,7 +99,7 @@ export default function ProjectToolsPage() {
 
   if (checkingAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5]">
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] text-stone-700">
         <Loader2 className="h-7 w-7 animate-spin text-[#a66b27]" />
       </main>
     );
@@ -124,7 +107,7 @@ export default function ProjectToolsPage() {
 
   if (!isAdmin) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5">
+      <main className="flex min-h-screen items-center justify-center bg-[#f6f0e5] p-5 text-stone-800">
         <div className="w-full max-w-md rounded-3xl border border-stone-300 bg-[#fffaf0] p-8 text-center shadow-xl">
           <ShieldCheck className="mx-auto h-10 w-10 text-[#a66b27]" />
 
@@ -149,7 +132,7 @@ export default function ProjectToolsPage() {
 
   return (
     <main className="min-h-screen bg-[#f6f0e5] p-5 text-stone-800 md:p-10">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-5xl">
         <a
           href="/admin"
           className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-[#8a561f]"
