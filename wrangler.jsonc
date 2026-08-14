@@ -12,13 +12,11 @@
     "global_fetch_strictly_public"
   ],
 
-  "secrets": {
-    "required": [
-      "OPENAI_API_KEY",
-      "R2_ACCESS_KEY_ID",
-      "R2_SECRET_ACCESS_KEY"
-    ]
-  },
+ "secrets": {
+  "required": [
+    "OPENAI_API_KEY"
+  ]
+},
 
   "assets": {
     "directory": ".open-next/assets",
