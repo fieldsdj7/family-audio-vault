@@ -44,7 +44,7 @@ async function sha256(value: string) {
 }
 
 async function hmac(
-  key: ArrayBuffer | Uint8Array,
+  key: ArrayBuffer,
   value: string,
 ) {
   const cryptoKey = await crypto.subtle.importKey(
@@ -126,8 +126,17 @@ async function createPresignedGetUrl(
 
   const encoder = new TextEncoder();
 
+  const secretBytes =
+    encoder.encode(
+      `AWS4${secretAccessKey}`,
+    );
+
   const dateKey = await hmac(
-    encoder.encode(`AWS4${secretAccessKey}`),
+    secretBytes.buffer.slice(
+      secretBytes.byteOffset,
+      secretBytes.byteOffset +
+        secretBytes.byteLength,
+    ) as ArrayBuffer,
     shortDate,
   );
 
