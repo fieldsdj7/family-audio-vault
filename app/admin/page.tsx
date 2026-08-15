@@ -63,6 +63,12 @@ type Question = {
   question_text: string;
 };
 
+type StorytellerRequest = {
+  id: string;
+  recording_id: string | null;
+  status: 'pending' | 'submitted' | 'revoked' | 'expired';
+};
+
 type StoryPhoto = {
   id: string;
   audio_track_id: string;
@@ -972,6 +978,8 @@ export default function AdminUpload() {
 
   const [allTracks, setAllTracks] = useState<AudioTrack[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [storytellerRequests, setStorytellerRequests] =
+    useState<StorytellerRequest[]>([]);
   const [loadingTracks, setLoadingTracks] = useState(false);
 
   const [selectedTrackId, setSelectedTrackId] = useState('');
@@ -1147,6 +1155,7 @@ export default function AdminUpload() {
         await Promise.all([
           fetchTracks(),
           fetchQuestions(),
+          fetchStorytellerRequests(),
         ]);
       }
     } catch {
@@ -1184,6 +1193,35 @@ export default function AdminUpload() {
     } catch {
       // Question linking is optional.
     }
+  }
+
+  async function fetchStorytellerRequests() {
+    try {
+      const response = await fetch(
+        '/api/cloudflare/storyteller-requests',
+        {
+          cache: 'no-store',
+        },
+      );
+
+      const data = (await response.json()) as {
+        requests?: StorytellerRequest[];
+      };
+
+      if (response.ok) {
+        setStorytellerRequests(data.requests || []);
+      }
+    } catch {
+      // Storyteller badges are optional and should not block Admin.
+    }
+  }
+
+  function isStorytellerTrack(trackId: string) {
+    return storytellerRequests.some(
+      (request) =>
+        request.recording_id === trackId &&
+        request.status === 'submitted',
+    );
   }
 
   function loadTrackIntoEditor(track: AudioTrack | null) {
@@ -2581,9 +2619,10 @@ export default function AdminUpload() {
 
             <button
               type="button"
-              onClick={() =>
-                void fetchTracks(selectedTrackId)
-              }
+              onClick={() => {
+                void fetchTracks(selectedTrackId);
+                void fetchStorytellerRequests();
+              }}
               className="inline-flex w-fit items-center gap-2 rounded-xl border border-stone-300 bg-white px-3 py-2 text-sm font-semibold"
             >
               <RefreshCw
@@ -2637,6 +2676,10 @@ export default function AdminUpload() {
                       key={track.id}
                       value={track.id}
                     >
+                      {isStorytellerTrack(track.id) ? '[Storyteller] ' : ''}
+                      {track.transcription_status === 'queued'
+                        ? '[Needs Transcription] '
+                        : ''}
                       {track.title} ·{' '}
                       {new Date(
                         track.created_at,
@@ -2649,20 +2692,37 @@ export default function AdminUpload() {
               {selectedTrack && (
                 <>
                   <div className="rounded-2xl border border-stone-200 bg-white p-4 text-sm text-stone-600">
-                    <span className="font-semibold text-stone-800">
-                      {selectedTrack.speaker}
-                    </span>{' '}
-                    · {selectedTrack.category || 'General'} ·
-                    Transcript:{' '}
-                    <span className="font-medium">
-                      {selectedTrack.transcription_status ||
-                        'not started'}
-                    </span>{' '}
-                    · Story:{' '}
-                    <span className="font-medium">
-                      {selectedTrack.story_status ||
-                        'not started'}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-stone-800">
+                        {selectedTrack.speaker}
+                      </span>
+
+                      {isStorytellerTrack(selectedTrack.id) && (
+                        <span className="rounded-full border border-[#d7bd8b] bg-[#fbf3e3] px-2.5 py-1 text-xs font-semibold text-[#7a4a19]">
+                          Storyteller
+                        </span>
+                      )}
+
+                      {selectedTrack.transcription_status === 'queued' && (
+                        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                          Needs Transcription
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-2">
+                      {selectedTrack.category || 'General'} ·
+                      Transcript:{' '}
+                      <span className="font-medium">
+                        {selectedTrack.transcription_status ||
+                          'not started'}
+                      </span>{' '}
+                      · Story:{' '}
+                      <span className="font-medium">
+                        {selectedTrack.story_status ||
+                          'not started'}
+                      </span>
+                    </div>
                   </div>
 
                   <details className="rounded-2xl border border-stone-200 bg-[#f8f3e9]">
