@@ -2,7 +2,7 @@ import {
   getVaultBindings,
   type VaultPerson,
   vaultAccessResponse,
-} from "../../../../../../../lib/cloudflare";
+} from "../../../../../../lib/cloudflare";
 
 const MAX_AUDIO_BYTES = 95 * 1024 * 1024;
 
