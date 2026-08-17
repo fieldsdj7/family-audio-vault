@@ -6,7 +6,7 @@ import {
   type VaultPerson,
   VaultAccessError,
   vaultAccessResponse,
-} from "../../../../../lib/cloudflare";
+} from "../../../../lib/cloudflare";
 
 export const maxDuration = 60;
 
