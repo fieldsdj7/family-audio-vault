@@ -119,6 +119,89 @@ function formatAudioTime(
   ).padStart(2, "0")}`;
 }
 
+function formatTotalAudioTime(
+  seconds: number,
+) {
+  const totalSeconds =
+    Math.max(
+      0,
+      Math.round(seconds),
+    );
+
+  const hours =
+    Math.floor(
+      totalSeconds / 3600,
+    );
+
+  const minutes =
+    Math.floor(
+      (totalSeconds % 3600) / 60,
+    );
+
+  if (hours > 0) {
+    return `${hours} hr ${minutes} min`;
+  }
+
+  return `${minutes} min`;
+}
+
+function audioDurationFromUrl(
+  url: string,
+) {
+  return new Promise<number>(
+    (resolve) => {
+      const audio =
+        document.createElement(
+          "audio",
+        );
+
+      let settled = false;
+
+      const finish = (
+        value: number,
+      ) => {
+        if (settled) return;
+
+        settled = true;
+
+        audio.removeAttribute(
+          "src",
+        );
+
+        audio.load();
+
+        resolve(
+          Number.isFinite(
+            value,
+          )
+            ? value
+            : 0,
+        );
+      };
+
+      audio.preload =
+        "metadata";
+
+      audio.onloadedmetadata =
+        () =>
+          finish(
+            audio.duration,
+          );
+
+      audio.onerror =
+        () => finish(0);
+
+      audio.src = url;
+      audio.load();
+
+      window.setTimeout(
+        () => finish(0),
+        15000,
+      );
+    },
+  );
+}
+
 async function readJson<T>(
   response: Response,
 ): Promise<T> {
@@ -476,6 +559,21 @@ export default function Home() {
       null,
     );
 
+  const durationCacheRef =
+    useRef<Map<string, number>>(
+      new Map(),
+    );
+
+  const [
+    totalAudioSeconds,
+    setTotalAudioSeconds,
+  ] = useState(0);
+
+  const [
+    loadingTotalAudioTime,
+    setLoadingTotalAudioTime,
+  ] = useState(false);
+
   const [
     accessibleVaults,
     setAccessibleVaults,
@@ -537,6 +635,101 @@ export default function Home() {
   useEffect(() => {
     void start();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function calculateTotalAudioTime() {
+      if (!personTracks.length) {
+        setTotalAudioSeconds(0);
+        setLoadingTotalAudioTime(
+          false,
+        );
+        return;
+      }
+
+      setLoadingTotalAudioTime(
+        true,
+      );
+
+      let total = 0;
+
+      for (
+        const track of
+        personTracks
+      ) {
+        if (cancelled) {
+          return;
+        }
+
+        const clippedDuration =
+          typeof track.clip_start_seconds ===
+            "number" &&
+          typeof track.clip_end_seconds ===
+            "number" &&
+          track.clip_end_seconds >
+            track.clip_start_seconds
+            ? Math.max(
+                0,
+                track.clip_end_seconds -
+                  track.clip_start_seconds,
+              )
+            : null;
+
+        if (
+          clippedDuration !==
+          null
+        ) {
+          total +=
+            clippedDuration;
+          continue;
+        }
+
+        const cached =
+          durationCacheRef.current.get(
+            track.id,
+          );
+
+        if (
+          cached !== undefined
+        ) {
+          total += cached;
+          continue;
+        }
+
+        const duration =
+          await audioDurationFromUrl(
+            `/api/cloudflare/audio/${track.id}`,
+          );
+
+        durationCacheRef.current.set(
+          track.id,
+          duration,
+        );
+
+        total += duration;
+      }
+
+      if (!cancelled) {
+        setTotalAudioSeconds(
+          total,
+        );
+
+        setLoadingTotalAudioTime(
+          false,
+        );
+      }
+    }
+
+    void calculateTotalAudioTime();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activePerson,
+    tracks,
+  ]);
 
   async function start() {
     setCheckingAccess(true);
@@ -1113,21 +1306,31 @@ export default function Home() {
                     </p>
                   </div>
 
-                  <div className="mt-8 flex items-center gap-3 text-sm text-stone-200">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-full border border-[#d8a95f]/60">
+                  <div className="mt-8 flex min-w-0 items-start gap-3 text-sm text-stone-200">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[#d8a95f]/60">
                       <Headphones className="h-4 w-4 text-[#e3bb77]" />
                     </span>
 
-                    <span>
-                      {
-                        personTracks.length
-                      }{" "}
-                      {personTracks.length ===
-                      1
-                        ? "recording"
-                        : "recordings"}{" "}
-                      preserved
-                    </span>
+                    <div className="min-w-0">
+                      <p>
+                        {
+                          personTracks.length
+                        }{" "}
+                        {personTracks.length ===
+                        1
+                          ? "recording"
+                          : "recordings"}{" "}
+                        preserved
+                      </p>
+
+                      <p className="mt-1 text-stone-300">
+                        {loadingTotalAudioTime
+                          ? "Calculating total audio time…"
+                          : `${formatTotalAudioTime(
+                              totalAudioSeconds,
+                            )} total audio`}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
