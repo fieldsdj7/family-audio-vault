@@ -12,6 +12,7 @@ import {
   Loader2,
   Mic2,
   ShieldCheck,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 
@@ -55,8 +56,15 @@ const readyCards: ToolCard[] = [
     href: '/project-tools/book-builder',
     title: 'Book Builder',
     description:
-      'Organize finished stories into chapters, review the book outline, and prepare the family history book.',
+      'Review finished stories, photos, approvals, and the current family book outline.',
     icon: BookOpen,
+  },
+  {
+    href: '/project-tools/biography-analysis',
+    title: 'Biography Analysis',
+    description:
+      'Analyze all full transcripts together, combine overlapping memories, flag conflicts, and propose a biography structure.',
+    icon: Sparkles,
   },
   {
     href: '/project-tools/voice-references',
