@@ -197,7 +197,7 @@ export default function BookBuilderPage() {
 
   async function approveStory(story: BookStory) {
     const confirmed = window.confirm(
-      `Approve “${story.storyTitle}” for the book?\n\nThis marks the current family story as approved.`,
+      `Approve “${story.storyTitle}” as a reviewed source story?\n\nThis confirms the current family story is ready to be used as source material for the biography.`,
     );
 
     if (!confirmed) return;
@@ -235,7 +235,7 @@ export default function BookBuilderPage() {
 
       setMessage({
         type: "success",
-        text: `“${story.storyTitle}” is approved for the book.`,
+        text: `“${story.storyTitle}” is approved as biography source material.`,
       });
     } catch (error) {
       setMessage({
@@ -316,8 +316,7 @@ export default function BookBuilderPage() {
           </h1>
 
           <p className="mt-3 max-w-3xl text-stone-600">
-            Review and approve finished family stories, organized
-            first by major book part and then as individual candidate chapters.
+            Review the individual source stories that will later be combined into a true biography. These are research sources, not final book chapters.
           </p>
         </header>
 
@@ -385,7 +384,7 @@ export default function BookBuilderPage() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[.18em] text-[#a66b27]">
-                    Current Book
+                    Current Source Collection
                   </p>
 
                   <h2 className="mt-2 font-serif text-3xl text-stone-900">
@@ -400,12 +399,12 @@ export default function BookBuilderPage() {
                 {summary?.readyToExport ? (
                   <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-800">
                     <CheckCircle className="h-4 w-4" />
-                    Ready for export
+                    All source stories reviewed
                   </span>
                 ) : (
                   <span className="inline-flex w-fit items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-semibold text-amber-900">
                     <AlertCircle className="h-4 w-4" />
-                    Still being built
+                    Source collection in progress
                   </span>
                 )}
               </div>
@@ -426,7 +425,7 @@ export default function BookBuilderPage() {
                       {summary.chapterCount}
                     </p>
                     <p className="text-xs text-stone-600">
-                      Candidate chapters
+                      Source stories
                     </p>
                   </div>
 
@@ -435,7 +434,7 @@ export default function BookBuilderPage() {
                       {summary.approvedStoryCount}
                     </p>
                     <p className="text-xs text-stone-600">
-                      Approved
+                      Reviewed sources
                     </p>
                   </div>
 
@@ -444,7 +443,7 @@ export default function BookBuilderPage() {
                       {summary.needsApprovalCount}
                     </p>
                     <p className="text-xs text-stone-600">
-                      Need approval
+                      Need review
                     </p>
                   </div>
 
@@ -483,9 +482,7 @@ export default function BookBuilderPage() {
                     </p>
 
                     <p className="mt-1">
-                      Those stories appear under General until you
-                      assign Early Life, Mid Life, or Later Life &
-                      Reflection in Story Studio.
+                      These older categories do not prevent Biography Analysis from using the transcripts. You do not need to manually recategorize everything for the biography to work.
                     </p>
                   </div>
                 </div>
@@ -497,12 +494,11 @@ export default function BookBuilderPage() {
                 <BookOpen className="mx-auto h-9 w-9 text-[#a66b27]" />
 
                 <h2 className="mt-4 font-serif text-2xl text-stone-900">
-                  No finished stories yet
+                  No source stories yet
                 </h2>
 
                 <p className="mt-2 text-stone-600">
-                  Stories will appear here after they are created in
-                  Story Studio.
+                  Source stories will appear here after they are created in Story Studio.
                 </p>
               </section>
             ) : (
@@ -561,7 +557,7 @@ export default function BookBuilderPage() {
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div>
                                   <p className="text-xs font-semibold uppercase tracking-[.16em] text-[#a66b27]">
-                                    Candidate Chapter {storyIndex + 1}
+                                    Source Story {storyIndex + 1}
                                   </p>
 
                                   <h3 className="mt-2 font-serif text-2xl text-stone-900">
@@ -678,7 +674,7 @@ export default function BookBuilderPage() {
 
                                     {approvingId === story.id
                                       ? "Approving…"
-                                      : "Approve Story"}
+                                      : "Mark Reviewed"}
                                   </button>
                                 )}
 
