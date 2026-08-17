@@ -319,7 +319,7 @@ function VaultAudioPlayer({
   }
 
   return (
-    <div className="mt-7 rounded-2xl border border-stone-200 bg-white p-4">
+    <div className="mt-7 w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-stone-200 bg-white p-3 sm:p-4">
       <audio
         ref={audioRef}
         key={track.id}
@@ -336,7 +336,7 @@ function VaultAudioPlayer({
         onEnded={onPause}
       />
 
-      <div className="flex items-center gap-4">
+      <div className="grid min-w-0 grid-cols-[44px_minmax(0,1fr)] items-center gap-x-3 gap-y-3 sm:grid-cols-[44px_minmax(0,1fr)_auto] sm:gap-x-4">
         <button
           type="button"
           onClick={() =>
@@ -379,11 +379,11 @@ function VaultAudioPlayer({
               ),
             )
           }
-          className="min-w-0 flex-1 accent-[#80542a]"
+          className="block w-full min-w-0 max-w-full accent-[#80542a]"
           aria-label="Recording position"
         />
 
-        <span className="shrink-0 text-sm tabular-nums text-stone-600">
+        <span className="col-span-2 justify-self-center whitespace-nowrap text-xs tabular-nums text-stone-600 sm:col-span-1 sm:justify-self-end sm:text-sm">
           {formatAudioTime(
             currentSeconds,
           )}{" "}
@@ -985,10 +985,10 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#f6f0e5] text-stone-800">
-      <div className="grid min-h-screen min-w-0 lg:grid-cols-[250px_minmax(0,1fr)]">
-        <aside className="min-w-0 overflow-hidden border-b border-stone-800 bg-[#20221e] px-5 py-6 text-stone-100 lg:border-b-0 lg:border-r">
-          <div className="flex items-center gap-3">
+    <main className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#f6f0e5] text-stone-800">
+      <div className="grid min-h-screen w-full min-w-0 max-w-full lg:grid-cols-[250px_minmax(0,1fr)]">
+        <aside className="w-full min-w-0 max-w-full overflow-hidden border-b border-stone-800 bg-[#20221e] px-4 py-5 text-stone-100 sm:px-5 sm:py-6 lg:border-b-0 lg:border-r">
+          <div className="flex min-w-0 items-center justify-center gap-3 text-center lg:justify-start lg:text-left">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[#c98b3c] text-[#20221e]">
               <BookOpen className="h-5 w-5" />
             </div>
@@ -1004,7 +1004,7 @@ export default function Home() {
             </div>
           </div>
 
-          <nav className="mt-8 flex max-w-full min-w-0 gap-2 overflow-x-auto lg:block lg:space-y-2">
+          <nav className="mt-6 flex w-full min-w-0 flex-wrap justify-center gap-2 lg:mt-8 lg:block lg:space-y-2">
             {availableVaults.map(
               (vault) => (
                 <button
@@ -1017,7 +1017,7 @@ export default function Home() {
                       vault.name,
                     )
                   }
-                  className={`flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm transition lg:w-full lg:whitespace-normal ${
+                  className={`flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition sm:gap-3 sm:px-4 sm:py-3 lg:w-full ${
                     activePerson ===
                     vault.name
                       ? "bg-white/10 font-medium text-white"
@@ -1036,7 +1036,7 @@ export default function Home() {
             {isAdmin && (
               <a
                 href="/admin"
-                className="flex w-auto shrink-0 items-center gap-3 whitespace-nowrap rounded-xl px-4 py-3 text-left text-sm text-stone-300 transition hover:bg-white/10 hover:text-white lg:w-full lg:whitespace-normal"
+                className="flex min-w-0 items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-stone-300 transition hover:bg-white/10 hover:text-white sm:gap-3 sm:px-4 sm:py-3 lg:w-full"
               >
                 <ShieldCheck className="h-4 w-4 text-[#d8a95f]" />
                 Admin Upload
@@ -1059,21 +1059,21 @@ export default function Home() {
           </div>
         </aside>
 
-        <section className="p-5 md:p-10">
-          <div className="mx-auto max-w-5xl">
-            <header className="flex flex-col gap-4 border-b border-stone-300 pb-7 sm:flex-row sm:items-start sm:justify-between">
+        <section className="w-full min-w-0 max-w-full px-3 py-5 sm:px-5 md:p-10">
+          <div className="mx-auto w-full min-w-0 max-w-5xl">
+            <header className="flex min-w-0 flex-col items-center gap-4 border-b border-stone-300 pb-7 text-center sm:flex-row sm:items-start sm:justify-between sm:text-left">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#a66b27]">
                   Our Family Legacy
                 </p>
 
-                <h1 className="mt-2 font-serif text-4xl text-stone-900 md:text-5xl">
+                <h1 className="mt-2 break-words font-serif text-3xl text-stone-900 sm:text-4xl md:text-5xl">
                   {vaultDisplayName(
                     currentVault.name,
                   )}
                 </h1>
 
-                <p className="mt-1 font-serif text-xl text-stone-600">
+                <p className="mt-1 break-words font-serif text-lg text-stone-600 sm:text-xl">
                   {
                     currentVault.title
                   }
@@ -1096,15 +1096,15 @@ export default function Home() {
               </button>
             </header>
 
-            <section className="mt-8 overflow-hidden rounded-3xl bg-[#5b4837] shadow-lg">
+            <section className="mt-8 w-full min-w-0 max-w-full overflow-hidden rounded-3xl bg-[#5b4837] shadow-lg">
               <div className="grid md:grid-cols-[1.05fr_.95fr]">
-                <div className="flex min-h-[280px] flex-col justify-between p-7 text-[#fffaf0] md:p-10">
+                <div className="flex min-h-[240px] min-w-0 flex-col justify-between p-5 text-[#fffaf0] sm:p-7 md:min-h-[280px] md:p-10">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#e3bb77]">
                       The Legacy Book
                     </p>
 
-                    <h2 className="mt-4 max-w-md font-serif text-4xl leading-tight md:text-5xl">
+                    <h2 className="mt-4 max-w-md break-words font-serif text-3xl leading-tight sm:text-4xl md:text-5xl">
                       The stories that shaped a life.
                     </h2>
 
@@ -1156,14 +1156,14 @@ export default function Home() {
             </section>
 
             {selectedTrack ? (
-              <section className="mt-10 rounded-3xl border border-stone-300 bg-[#fffaf0] p-6 shadow-sm md:p-8">
+              <section className="mt-10 w-full min-w-0 max-w-full overflow-hidden rounded-3xl border border-stone-300 bg-[#fffaf0] p-4 shadow-sm sm:p-6 md:p-8">
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a66b27]">
                       Now Listening
                     </p>
 
-                    <h2 className="mt-2 font-serif text-3xl text-stone-900">
+                    <h2 className="mt-2 break-words font-serif text-2xl text-stone-900 sm:text-3xl">
                       {
                         selectedTrack.title
                       }
@@ -1194,7 +1194,7 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex w-full min-w-0 flex-wrap items-center justify-center gap-2 sm:w-auto sm:justify-start sm:gap-3">
                     {!selectedTrack.source_track_id && (
                       <button
                         type="button"
@@ -1271,7 +1271,7 @@ export default function Home() {
                       Word-for-word transcript
                     </p>
 
-                    <p className="mt-3 whitespace-pre-line leading-relaxed text-stone-700">
+                    <p className="mt-3 break-words whitespace-pre-line leading-relaxed text-stone-700">
                       {
                         selectedTrack.transcript
                       }
@@ -1290,7 +1290,7 @@ export default function Home() {
                         selectedTrack.title}
                     </h3>
 
-                    <p className="mt-3 whitespace-pre-line font-serif text-lg leading-relaxed text-stone-700">
+                    <p className="mt-3 break-words whitespace-pre-line font-serif text-lg leading-relaxed text-stone-700">
                       {
                         selectedTrack.story_chapter
                       }
@@ -1323,7 +1323,7 @@ export default function Home() {
                   Explore by chapter
                 </p>
 
-                <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
+                <div className="mt-3 flex flex-wrap justify-center gap-2 pb-2 sm:justify-start">
                   {categories.map(
                     (
                       category,
@@ -1338,7 +1338,7 @@ export default function Home() {
                             category,
                           )
                         }
-                        className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition ${
+                        className={`max-w-full rounded-full px-4 py-2 text-sm font-medium transition ${
                           activeCategory ===
                           category
                             ? "bg-[#3b4536] text-white"
@@ -1356,7 +1356,7 @@ export default function Home() {
             )}
 
             <section className="mt-10 pb-10">
-              <div className="flex items-end justify-between gap-4">
+              <div className="flex min-w-0 flex-col items-center gap-2 text-center sm:flex-row sm:items-end sm:justify-between sm:text-left">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a66b27]">
                     The Collection
@@ -1391,7 +1391,7 @@ export default function Home() {
                           track,
                         )
                       }
-                      className={`group flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition md:p-5 ${
+                      className={`group flex w-full min-w-0 max-w-full items-center gap-3 overflow-hidden rounded-2xl border p-3 text-left transition sm:gap-4 sm:p-4 md:p-5 ${
                         selectedTrack?.id ===
                         track.id
                           ? "border-[#b57931] bg-[#f4e7cf]"
@@ -1405,13 +1405,13 @@ export default function Home() {
 </span>
 
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-serif text-xl text-stone-900">
+                        <span className="block break-words font-serif text-lg text-stone-900 sm:text-xl">
                           {
                             track.title
                           }
                         </span>
 
-                        <span className="mt-1 block text-sm text-stone-600">
+                        <span className="mt-1 block break-words text-xs text-stone-600 sm:text-sm">
                           {
                             track.speaker
                           }{" "}
