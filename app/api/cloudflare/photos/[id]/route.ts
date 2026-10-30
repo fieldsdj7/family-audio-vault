@@ -1,6 +1,7 @@
 import {
   getVaultBindings,
   requireVaultMember,
+  type VaultPerson,
   vaultAccessResponse,
 } from "../../../../../lib/cloudflare";
 
@@ -15,16 +16,6 @@ export async function GET(
   try {
     const member =
       await requireVaultMember(request);
-
-    if (!member.isAdmin) {
-      return Response.json(
-        {
-          error:
-            "Only a Vault administrator can view story photos here.",
-        },
-        { status: 403 },
-      );
-    }
 
     const { id } =
       await context.params;
@@ -48,15 +39,20 @@ export async function GET(
     const photo = await db
       .prepare(
         `SELECT
-           id,
-           storage_path
-         FROM story_photos
-         WHERE id = ?`,
+           photos.id,
+           photos.storage_path,
+           tracks.vault_person
+         FROM story_photos AS photos
+         INNER JOIN audio_tracks AS tracks ON tracks.id = photos.audio_track_id
+         WHERE photos.id = ?
+           AND tracks.trashed_at IS NULL
+           AND tracks.is_split_master = 0`,
       )
       .bind(id)
       .first<{
         id: string;
         storage_path: string;
+        vault_person: VaultPerson;
       }>();
 
     if (!photo) {
@@ -66,6 +62,13 @@ export async function GET(
             "That photo could not be found.",
         },
         { status: 404 },
+      );
+    }
+
+    if (!member.allowedVaults.includes(photo.vault_person)) {
+      return Response.json(
+        { error: "You do not have access to that recording." },
+        { status: 403 },
       );
     }
 
@@ -93,7 +96,7 @@ export async function GET(
 
     headers.set(
       "Cache-Control",
-      "private, max-age=300",
+      "private, no-store",
     );
 
     headers.set(
