@@ -3284,7 +3284,7 @@ export default function AdminUpload() {
                             <div className="grid gap-4 p-4 sm:grid-cols-[180px_minmax(0,1fr)]">
                               <div className="overflow-hidden rounded-xl bg-stone-100">
                                 <img
-                                  src={`/api/cloudflare/photo/${photo.id}`}
+                                  src={`/api/cloudflare/photos/${photo.id}`}
                                   alt={
                                     photo.caption?.trim() ||
                                     `Story photo ${index + 1}`
