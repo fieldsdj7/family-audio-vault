@@ -488,6 +488,65 @@ function VaultAudioPlayer({
   );
 }
 
+type StoryPhoto = { id: string; caption: string | null };
+
+function StoryPhotos({ recordingId }: { recordingId: string }) {
+  const [photos, setPhotos] = useState<StoryPhoto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadPhotos() {
+      try {
+        const response = await fetch(
+          `/api/cloudflare/photos?recordingId=${encodeURIComponent(recordingId)}`,
+          { cache: "no-store", signal: controller.signal },
+        );
+        const data = await readJson<{ photos?: StoryPhoto[]; error?: string }>(response);
+        if (!response.ok) throw new Error(data.error || "Story photos could not be loaded.");
+        if (!controller.signal.aborted) setPhotos(data.photos || []);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setError(error instanceof Error ? error.message : "Story photos could not be loaded.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+    void loadPhotos();
+    return () => controller.abort();
+  }, [recordingId]);
+
+  if (!loading && !error && photos.length === 0) return null;
+  return (
+    <section aria-label="Story photos" className="mt-7 w-full min-w-0 max-w-full border-t border-stone-200 pt-7">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a66b27]">Story Photos</h3>
+      {loading && <p role="status" className="mt-3 text-sm text-stone-600">Loading story photos…</p>}
+      {error && <p role="alert" className="mt-3 break-words text-sm text-stone-600">{error}</p>}
+      <div className="mt-4 grid min-w-0 grid-cols-1 gap-5 sm:grid-cols-2">
+        {photos.map((photo) => (
+          <figure key={photo.id} className="min-w-0 max-w-full">
+            {/* Use the authenticated route directly to preserve member access checks. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`/api/cloudflare/photos/${encodeURIComponent(photo.id)}`}
+              alt={photo.caption?.trim() || "Family story photo"}
+              loading="lazy"
+              className="block h-auto w-full max-w-full rounded-2xl border border-stone-200"
+            />
+            {photo.caption && (
+              <figcaption className="mt-2 whitespace-pre-line text-sm leading-relaxed text-stone-600 [overflow-wrap:anywhere]">
+                {photo.caption}
+              </figcaption>
+            )}
+          </figure>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   const [
     tracks,
@@ -1500,6 +1559,7 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+                <StoryPhotos key={selectedTrack.id} recordingId={selectedTrack.id} />
               </section>
             ) : (
               <section className="mt-10 rounded-3xl border border-dashed border-stone-300 bg-[#fffaf0] p-10 text-center">
