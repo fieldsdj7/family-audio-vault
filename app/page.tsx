@@ -1,5 +1,7 @@
 "use client";
 
+import StoryPhotos from "./components/StoryPhotos";
+
 import {
   useEffect,
   useRef,
@@ -1500,6 +1502,7 @@ export default function Home() {
                     </p>
                   </div>
                 )}
+                <StoryPhotos key={`photos-${selectedTrack.id}`} recordingId={selectedTrack.id} />
               </section>
             ) : (
               <section className="mt-10 rounded-3xl border border-dashed border-stone-300 bg-[#fffaf0] p-10 text-center">

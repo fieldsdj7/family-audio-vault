@@ -1,6 +1,7 @@
 import {
   getVaultBindings,
   requireVaultMember,
+  type VaultPerson,
   vaultAccessResponse,
 } from "../../../../lib/cloudflare";
 
@@ -87,12 +88,7 @@ function extensionForPhoto(file: File) {
 
 export async function GET(request: Request) {
   try {
-    const access =
-      await requireAdministrator(request);
-
-    if (access.response) {
-      return access.response;
-    }
+    const member = await requireVaultMember(request);
 
     const recordingId =
       new URL(request.url).searchParams
@@ -114,14 +110,14 @@ export async function GET(request: Request) {
 
     const recording = await db
       .prepare(
-        `SELECT id
+        `SELECT id, vault_person
          FROM audio_tracks
          WHERE id = ?
            AND trashed_at IS NULL
            AND is_split_master = 0`,
       )
       .bind(recordingId)
-      .first<{ id: string }>();
+      .first<{ id: string; vault_person: VaultPerson }>();
 
     if (!recording) {
       return Response.json(
@@ -130,6 +126,13 @@ export async function GET(request: Request) {
             "That recording could not be found.",
         },
         { status: 404 },
+      );
+    }
+
+    if (!member.allowedVaults.includes(recording.vault_person)) {
+      return Response.json(
+        { error: "You do not have access to that recording." },
+        { status: 403 },
       );
     }
 
@@ -150,9 +153,10 @@ export async function GET(request: Request) {
       .bind(recordingId)
       .all<PhotoRow>();
 
-    return Response.json({
-      photos: photos.results,
-    });
+    return Response.json(
+      { photos: photos.results },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return vaultAccessResponse(error);
   }
